@@ -9,6 +9,7 @@ import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area';
 import { SQLEditor } from '@/modules/sql-editor/sql-editor';
 import { useSqlEditorPanelsState } from '@/modules/sql-editor/sql-editor-panels-state-provider';
 import { getGetDashboardQueryKey } from '@/orval/dashboard';
+import { getGetNavigationTreesQueryKey } from '@/orval/navigation-trees';
 import { getGetQueriesQueryKey, useCreateQuery } from '@/orval/queries';
 
 import { SqlEditorResizableHandle, SqlEditorResizablePanel } from '../sql-editor-resizable';
@@ -50,6 +51,9 @@ export function SqlEditorCenterPanel() {
           }),
           queryClient.invalidateQueries({
             queryKey: getGetDashboardQueryKey(),
+          }),
+          queryClient.invalidateQueries({
+            queryKey: getGetNavigationTreesQueryKey(),
           }),
         ]);
         if (newQueryRecord) {
