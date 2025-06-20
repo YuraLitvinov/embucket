@@ -1,3 +1,6 @@
+![DBT Gitlab run results](https://raw.githubusercontent.com/Embucket/embucket/assets_dbt/assets_dbt/dbt_success_badge.svg)
+## DBT Gitlab run results:
+![DBT Gitlab run results visualization](https://raw.githubusercontent.com/Embucket/embucket/assets_dbt/assets_dbt/dbt_run_status.png)
 
 # How to run dbt-gitlab project?
 
@@ -33,7 +36,3 @@ Files to start with:
 **top_errors.txt** - file with the top 10 errors
 
 **run.log** - file with the logs after the last run
-
-
-Emucket dbt run result:
-![alt text](charts/dbt_run_status.png)
