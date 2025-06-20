@@ -34,7 +34,10 @@ use dotenv::dotenv;
 use object_store::path::Path;
 use opentelemetry::trace::TracerProvider;
 use opentelemetry_sdk::Resource;
+use opentelemetry_sdk::runtime::TokioCurrentThread;
+use opentelemetry_sdk::trace::BatchSpanProcessor;
 use opentelemetry_sdk::trace::SdkTracerProvider;
+use opentelemetry_sdk::trace::span_processor_with_async_runtime::BatchSpanProcessor as BatchSpanProcessorAsyncRuntime;
 use slatedb::{Db as SlateDb, config::DbOptions};
 use std::fs;
 use std::net::SocketAddr;
@@ -80,7 +83,7 @@ async fn main() {
 
     let opts = cli::CliOpts::parse();
 
-    let provider = setup_tracing(&opts);
+    let tracing_provider = setup_tracing(&opts);
 
     let slatedb_prefix = opts.slatedb_prefix.clone();
     let data_format = opts
@@ -217,7 +220,7 @@ async fn main() {
         .await
         .expect("Failed to start server");
 
-    provider
+    tracing_provider
         .shutdown()
         .expect("TracerProvider should shutdown successfully");
 }
@@ -232,10 +235,22 @@ fn setup_tracing(opts: &cli::CliOpts) -> SdkTracerProvider {
 
     let resource = Resource::builder().with_service_name("Em").build();
 
-    let provider = SdkTracerProvider::builder()
-        .with_batch_exporter(exporter)
-        .with_resource(resource)
-        .build();
+    // Since BatchSpanProcessor and BatchSpanProcessorAsyncRuntime are not compatible with each other
+    // we just create TracerProvider with different span processors
+    let tracing_provider = match opts.tracing_span_processor {
+        cli::TracingSpanProcessor::BatchSpanProcessor => SdkTracerProvider::builder()
+            .with_span_processor(BatchSpanProcessor::builder(exporter).build())
+            .with_resource(resource)
+            .build(),
+        cli::TracingSpanProcessor::BatchSpanProcessorExperimentalAsyncRuntime => {
+            SdkTracerProvider::builder()
+                .with_span_processor(
+                    BatchSpanProcessorAsyncRuntime::builder(exporter, TokioCurrentThread).build(),
+                )
+                .with_resource(resource)
+                .build()
+        }
+    };
 
     let targets_with_level =
         |targets: &[&'static str], level: LevelFilter| -> Vec<(&str, LevelFilter)> {
@@ -246,7 +261,7 @@ fn setup_tracing(opts: &cli::CliOpts) -> SdkTracerProvider {
     tracing_subscriber::registry()
         // Telemetry filtering
         .with(
-            tracing_opentelemetry::OpenTelemetryLayer::new(provider.tracer("embucket"))
+            tracing_opentelemetry::OpenTelemetryLayer::new(tracing_provider.tracer("embucket"))
                 .with_level(true)
                 .with_filter(Targets::default().with_targets(targets_with_level(
                     &TARGETS,
@@ -256,8 +271,10 @@ fn setup_tracing(opts: &cli::CliOpts) -> SdkTracerProvider {
         // Logs filtering
         .with(
             tracing_subscriber::fmt::layer()
-                .pretty()
+                .with_target(true)
+                .with_level(true)
                 .with_span_events(FmtSpan::CLOSE)
+                .json()
                 .with_filter(match std::env::var("RUST_LOG") {
                     Ok(val) => match val.parse::<Targets>() {
                         // env var parse OK
@@ -272,14 +289,9 @@ fn setup_tracing(opts: &cli::CliOpts) -> SdkTracerProvider {
                     // No var set: use default log level INFO
                     _ => Targets::default()
                         .with_targets(targets_with_level(&TARGETS, LevelFilter::INFO))
-                        // disable following targets:
                         .with_targets(targets_with_level(
-                            &[
-                                "tower_sessions",
-                                "tower_sessions_core",
-                                "tower_http",
-                                "opentelemetry_sdk",
-                            ],
+                            // disable following targets:
+                            &["tower_sessions", "tower_sessions_core", "tower_http"],
                             LevelFilter::OFF,
                         ))
                         .with_default(LevelFilter::INFO),
@@ -287,7 +299,7 @@ fn setup_tracing(opts: &cli::CliOpts) -> SdkTracerProvider {
         )
         .init();
 
-    provider
+    tracing_provider
 }
 
 /// This func will wait for a signal to shutdown the service.
