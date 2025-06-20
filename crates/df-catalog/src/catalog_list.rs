@@ -2,7 +2,7 @@ use super::catalogs::embucket::catalog::EmbucketCatalog;
 use super::catalogs::embucket::iceberg_catalog::EmbucketIcebergCatalog;
 use crate::catalog::CachingCatalog;
 use crate::catalogs::slatedb::catalog::{SLATEDB_CATALOG, SlateDBCatalog};
-use crate::error::{self as df_catalog_error, MetastoreSnafu, Result};
+use crate::error::{self as df_catalog_error, InvalidCacheSnafu, MetastoreSnafu, Result};
 use crate::schema::CachingSchema;
 use crate::table::CachingTable;
 use aws_config::{BehaviorVersion, Region, SdkConfig};
@@ -10,6 +10,7 @@ use aws_credential_types::Credentials;
 use aws_credential_types::provider::SharedCredentialsProvider;
 use core_history::HistoryStore;
 use core_metastore::{AwsCredentials, Metastore, VolumeType as MetastoreVolumeType};
+use core_metastore::{SchemaIdent, TableIdent};
 use core_utils::scan_iterator::ScanIterator;
 use dashmap::DashMap;
 use datafusion::{
@@ -30,6 +31,12 @@ use tokio::time::interval;
 use url::Url;
 
 pub const DEFAULT_CATALOG: &str = "embucket";
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum CachedEntity {
+    Schema(SchemaIdent),
+    Table(TableIdent),
+}
 
 pub struct EmbucketCatalogList {
     pub metastore: Arc<dyn Metastore>,
@@ -181,14 +188,130 @@ impl EmbucketCatalogList {
         Ok(catalogs)
     }
 
+    /// Do not keep returned references to avoid deadlocks
+    fn catalog_ref_by_name(
+        &self,
+        name: &str,
+    ) -> Result<dashmap::mapref::one::Ref<'_, String, Arc<CachingCatalog>>> {
+        self.catalogs.get(name).ok_or_else(|| {
+            InvalidCacheSnafu {
+                entity: "catalog",
+                name,
+            }
+            .build()
+        })
+    }
+
+    /// Invalidates the cache for a specific catalog entity (schema or table).
+    ///
+    /// This method ensures that the cache for the specified entity is refreshed or cleared as appropriate.
+    /// - For a schema: If the schema exists in the underlying catalog, it is (re-)cached; if it does not exist, the cache entry is removed.
+    /// - For a table: The table cache is invalidated. If the table exists in the underlying schema, it is (re-)cached; otherwise, the cache entry is removed.
+    ///
+    /// # Arguments
+    /// * `entity` - The cached entity to invalidate, which can be either a schema or a table.
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The specified catalog or schema does not exist in the cache.
+    /// - There is a failure when accessing the underlying catalog or schema provider.
+    #[allow(clippy::as_conversions, clippy::too_many_lines)]
+    #[tracing::instrument(
+        name = "EmbucketCatalogList::refresh_schema",
+        level = "debug",
+        skip(self),
+        err
+    )]
+    pub async fn invalidate_cache(&self, entity: CachedEntity) -> Result<()> {
+        match entity {
+            CachedEntity::Schema(schema_ident) => {
+                let SchemaIdent { schema, database } = schema_ident;
+                let catalog_ref = self.catalog_ref_by_name(&database)?;
+                if !catalog_ref.should_refresh {
+                    return Ok(());
+                }
+                if let Some(schema_provider) = catalog_ref.catalog.schema(&schema) {
+                    // schema exists -> ensure it's cached
+                    if catalog_ref.schemas_cache.get(&schema).is_none() {
+                        let schema = CachingSchema {
+                            schema: schema_provider,
+                            tables_cache: DashMap::default(),
+                            name: schema.to_string(),
+                        };
+                        catalog_ref
+                            .schemas_cache
+                            .insert(schema.name.clone(), Arc::new(schema));
+                    }
+                } else {
+                    // no schema exists -> ensure cache is empty
+                    catalog_ref.schemas_cache.remove(&schema);
+                }
+            }
+            CachedEntity::Table(table_ident) => {
+                let TableIdent {
+                    database,
+                    schema,
+                    table,
+                } = table_ident;
+                let catalog_ref = self.catalog_ref_by_name(&database)?;
+                if !catalog_ref.should_refresh {
+                    return Ok(());
+                }
+                let schema_ref = catalog_ref.schemas_cache.get(&schema).ok_or_else(|| {
+                    InvalidCacheSnafu {
+                        entity: "schema",
+                        name: format!("{database}.{schema}"),
+                    }
+                    .build()
+                })?;
+
+                // invalidate table cache if table exists, noop if doesn't
+                schema_ref.tables_cache.remove(&table);
+
+                if let Some(table_provider) = schema_ref
+                    .schema
+                    .table(&table)
+                    .await
+                    .context(df_catalog_error::DataFusionSnafu)?
+                {
+                    // ensure table is cached
+                    schema_ref.tables_cache.insert(
+                        table.to_string(),
+                        Arc::new(CachingTable::new_with_schema(
+                            table.to_string(),
+                            table_provider.schema(),
+                            Arc::clone(&table_provider),
+                        )),
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     #[allow(clippy::as_conversions, clippy::too_many_lines)]
     #[tracing::instrument(
         name = "EmbucketCatalogList::refresh",
         level = "debug",
         skip(self),
+        fields(catalogs_to_refresh),
         err
     )]
     pub async fn refresh(&self) -> Result<()> {
+        // Record the result as part of the current span.
+        tracing::Span::current().record(
+            "catalogs_to_refresh",
+            format!(
+                "{:?}",
+                self.catalogs
+                    .iter()
+                    .filter(|cat| cat.should_refresh)
+                    .map(|cat| cat.name.clone())
+                    .collect::<Vec<_>>()
+            ),
+        );
+
         for catalog in self.catalogs.iter_mut() {
             if catalog.should_refresh {
                 let schemas = catalog.schema_names();
@@ -333,7 +456,7 @@ impl CatalogProviderList for EmbucketCatalogList {
     }
 
     #[tracing::instrument(
-        name = "CatalogProviderList::register_catalog",
+        name = "EmbucketCatalogList::register_catalog",
         level = "debug",
         skip(self, catalog)
     )]
@@ -352,7 +475,7 @@ impl CatalogProviderList for EmbucketCatalogList {
     }
 
     #[tracing::instrument(
-        name = "CatalogProviderList::catalog_names",
+        name = "EmbucketCatalogList::catalog_names",
         level = "debug",
         skip(self)
     )]
@@ -361,7 +484,7 @@ impl CatalogProviderList for EmbucketCatalogList {
     }
 
     #[allow(clippy::as_conversions)]
-    #[tracing::instrument(name = "CatalogProviderList::catalog", level = "debug", skip(self))]
+    #[tracing::instrument(name = "EmbucketCatalogList::catalog", level = "debug", skip(self))]
     fn catalog(&self, name: &str) -> Option<Arc<dyn CatalogProvider>> {
         self.catalogs
             .get(name)

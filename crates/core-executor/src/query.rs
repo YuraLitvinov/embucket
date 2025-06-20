@@ -41,6 +41,8 @@ use datafusion_expr::logical_plan::dml::{DmlStatement, InsertOp, WriteOp};
 use datafusion_expr::{CreateMemoryTable, DdlStatement, Expr as DFExpr, Projection, TryCast};
 use datafusion_iceberg::catalog::catalog::IcebergCatalog;
 use df_catalog::catalog::CachingCatalog;
+use df_catalog::catalog_list::CachedEntity;
+use df_catalog::error::Error as CatalogError;
 use df_catalog::information_schema::session_params::SessionProperty;
 use embucket_functions::semi_structured::variant::visitors::visit_all;
 use embucket_functions::visitors::{
@@ -134,6 +136,38 @@ impl UserQuery {
             .unwrap_or_else(|| "public".to_string())
     }
 
+    #[instrument(
+        name = "UserQuery::refresh_catalog_partially",
+        level = "debug",
+        skip(self),
+        err
+    )]
+    async fn refresh_catalog_partially(&self, entity: CachedEntity) -> ExecutionResult<()> {
+        if let Some(catalog_list_impl) = self
+            .session
+            .ctx
+            .state()
+            .catalog_list()
+            .as_any()
+            .downcast_ref::<EmbucketCatalogList>()
+        {
+            let res = catalog_list_impl
+                .invalidate_cache(entity)
+                .await
+                .context(RefreshCatalogListSnafu);
+
+            // Not sure we need this, but just in case
+            // TODO: Remove following block when refresh_catalog removed
+            if let Err(ExecutionError::RefreshCatalogList { source, .. }) = res {
+                // refresh entire catalog if cache error happen
+                if let CatalogError::InvalidCache { .. } = *source {
+                    self.refresh_catalog().await?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     async fn refresh_catalog(&self) -> ExecutionResult<()> {
         if let Some(catalog_list_impl) = self
             .session
@@ -200,10 +234,19 @@ impl UserQuery {
     }
 
     #[allow(clippy::too_many_lines)]
-    #[instrument(name = "UserQuery::execute", level = "debug", skip(self), err)]
+    #[instrument(
+        name = "UserQuery::execute",
+        level = "debug",
+        skip(self),
+        fields(statement),
+        err
+    )]
     pub async fn execute(&mut self) -> ExecutionResult<QueryResult> {
         let statement = self.parse_query().context(ex_error::DataFusionSnafu)?;
         self.query = statement.to_string();
+
+        // Record the result as part of the current span.
+        tracing::Span::current().record("statement", format!("{statement:#?}"));
 
         // TODO: Code should be organized in a better way
         // 1. Single place to parse SQL strings into AST
@@ -286,13 +329,11 @@ impl UserQuery {
                 }
                 Statement::CreateSchema { .. } => {
                     let result = Box::pin(self.create_schema(*s)).await;
-                    self.refresh_catalog().await?;
                     return result;
                 }
                 Statement::CreateStage { .. } => {
                     // We support only CSV uploads for now
                     let result = Box::pin(self.create_stage_query(*s)).await;
-                    self.refresh_catalog().await?;
                     return result;
                 }
                 Statement::CopyIntoSnowflake { .. } => {
@@ -318,7 +359,6 @@ impl UserQuery {
                 }
                 Statement::Truncate { table_names, .. } => {
                     let result = Box::pin(self.truncate_table(table_names)).await;
-                    self.refresh_catalog().await?;
                     return result;
                 }
                 Statement::Query(mut subquery) => {
@@ -328,7 +368,6 @@ impl UserQuery {
                 }
                 Statement::Drop { .. } => {
                     let result = Box::pin(self.drop_query(*s)).await;
-                    self.refresh_catalog().await?;
                     return result;
                 }
                 Statement::Merge { .. } => {
@@ -448,6 +487,12 @@ impl UserQuery {
                         .drop_table(&ident)
                         .await
                         .context(ex_error::IcebergSnafu)?;
+                    self.refresh_catalog_partially(CachedEntity::Table(MetastoreTableIdent {
+                        database: catalog_name.to_string(),
+                        schema: schema_name,
+                        table: ident.name().to_string(),
+                    }))
+                    .await?;
                 }
                 self.status_response()
             }
@@ -463,6 +508,11 @@ impl UserQuery {
                         .drop_namespace(namespace)
                         .await
                         .context(ex_error::IcebergSnafu)?;
+                    self.refresh_catalog_partially(CachedEntity::Schema(MetastoreSchemaIdent {
+                        database: catalog_name.to_string(),
+                        schema: schema_name,
+                    }))
+                    .await?;
                 }
                 self.status_response()
             }
@@ -521,7 +571,8 @@ impl UserQuery {
         .await?;
 
         // Now we have created table in the metastore, we need to register it in the catalog
-        self.refresh_catalog().await?;
+        self.refresh_catalog_partially(CachedEntity::Table(ident))
+            .await?;
 
         // Insert data to new table
         // Since we don't execute logical plan, and we don't transform it to physical plan and
@@ -978,7 +1029,7 @@ impl UserQuery {
         let catalog = self.get_catalog(&ident.database)?;
 
         let downcast_result = self
-            .resolve_iceberg_catalog_or_execute(catalog, ident.database, plan)
+            .resolve_iceberg_catalog_or_execute(catalog, ident.database.clone(), plan)
             .await;
         let iceberg_catalog = match downcast_result {
             IcebergCatalogResult::Catalog(catalog) => catalog,
@@ -1004,13 +1055,17 @@ impl UserQuery {
             }
             .fail();
         }
-        let namespace = Namespace::try_new(&[ident.schema])
+        let namespace = Namespace::try_new(&[ident.schema.clone()])
             .map_err(|err| DataFusionError::External(Box::new(err)))
             .context(ex_error::DataFusionSnafu)?;
         iceberg_catalog
             .create_namespace(&namespace, None)
             .await
             .context(ex_error::IcebergSnafu)?;
+
+        self.refresh_catalog_partially(CachedEntity::Schema(ident))
+            .await?;
+
         self.created_entity_response()
     }
 
@@ -1206,6 +1261,13 @@ impl UserQuery {
         Box::pin(self.execute_with_custom_plan(&query)).await
     }
 
+    #[instrument(
+        name = "UserQuery::truncate_table",
+        level = "trace",
+        skip(self),
+        err,
+        ret
+    )]
     pub async fn truncate_table(
         &self,
         table_names: Vec<TruncateTableTarget>,
@@ -1221,7 +1283,14 @@ impl UserQuery {
             ),
             QueryContext::default(),
         );
-        query.execute().await
+        let res = query.execute().await;
+
+        let table_ident: MetastoreTableIdent = object_name.into();
+
+        self.refresh_catalog_partially(CachedEntity::Table(table_ident))
+            .await?;
+
+        res
     }
 
     #[must_use]
