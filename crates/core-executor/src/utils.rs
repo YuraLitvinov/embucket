@@ -224,6 +224,22 @@ pub fn convert_record_batches(
                     );
                     Arc::clone(&converted_column)
                 }
+                DataType::Decimal128(_, _) => {
+                    let converted_column = if data_format == DataSerializationFormat::Json {
+                        cast(&column, &DataType::Utf8).context(ArrowSnafu)?
+                    } else {
+                        Arc::clone(column)
+                    };
+                    fields.push(
+                        Field::new(
+                            field.name(),
+                            converted_column.data_type().clone(),
+                            field.is_nullable(),
+                        )
+                        .with_metadata(metadata),
+                    );
+                    Arc::clone(&converted_column)
+                }
                 _ => {
                     fields.push(field.clone().with_metadata(metadata));
                     Arc::clone(column)
