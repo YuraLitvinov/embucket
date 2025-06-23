@@ -5,7 +5,7 @@ import { Columns, Table } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs2';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { TableDataUploadDialog } from '@/modules/shared/table-data-upload-dialog/table-data-upload-dialog';
 import { useGetTableColumns, useGetTablePreviewData } from '@/orval/tables';
 
@@ -31,12 +31,14 @@ export function ColumnsPage() {
     data: { items: columns } = {},
     isFetching: isFetchingColumns,
     isLoading: isLoadingColumns,
+    refetch: refetchColumns,
   } = useGetTableColumns(databaseName, schemaName, tableName);
 
   const {
     data: { items: previewData } = {},
     isFetching: isPreviewDataFetching,
     isLoading: isLoadingPreviewData,
+    refetch: refetchPreviewData,
   } = useGetTablePreviewData(databaseName, schemaName, tableName);
 
   const {
@@ -78,7 +80,7 @@ export function ColumnsPage() {
               </Button>
             }
           />
-          <Tabs defaultValue="columns" className="size-full">
+          <Tabs defaultValue="columns" variant="underline" className="size-full">
             <TabsList className="px-4">
               <TabsTrigger value="columns">Columns</TabsTrigger>
               <TabsTrigger value="data-preview">Data Preview</TabsTrigger>
@@ -89,6 +91,7 @@ export function ColumnsPage() {
                 isFetchingColumns={isFetchingColumns}
                 search={search}
                 onSearch={setSearch}
+                onRefetchColumns={refetchColumns}
               />
               {isColumnsEmpty && !isLoadingColumns ? (
                 <PageEmptyContainer
@@ -113,6 +116,7 @@ export function ColumnsPage() {
                 isFetchingPreviewData={isPreviewDataFetching}
                 search={search}
                 onSearch={setSearch}
+                onRefetchPreviewData={refetchPreviewData}
               />
               {isPreviewEmpty && !isLoadingPreviewData ? (
                 <PageEmptyContainer

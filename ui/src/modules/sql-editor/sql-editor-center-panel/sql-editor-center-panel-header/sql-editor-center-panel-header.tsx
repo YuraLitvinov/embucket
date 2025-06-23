@@ -13,12 +13,13 @@ export const SqlEditorCenterPanelHeader = () => {
   const navigate = useNavigate();
   const addTab = useSqlEditorSettingsStore((state) => state.addTab);
 
-  const { mutateAsync, isPending } = useCreateWorksheet({
+  const { mutate, isPending } = useCreateWorksheet({
     mutation: {
       onSuccess: (worksheet) => {
         queryClient.invalidateQueries({
           queryKey: getGetWorksheetsQueryKey(),
         });
+        addTab(worksheet);
         navigate({
           to: '/sql-editor/$worksheetId',
           params: {
@@ -29,18 +30,11 @@ export const SqlEditorCenterPanelHeader = () => {
     },
   });
 
-  const handleAddTab = async () => {
-    const worksheet = await mutateAsync({
+  const handleAddTab = () => {
+    mutate({
       data: {
         name: '',
         content: '',
-      },
-    });
-    addTab(worksheet);
-    navigate({
-      to: '/sql-editor/$worksheetId',
-      params: {
-        worksheetId: worksheet.id.toString(),
       },
     });
   };
@@ -59,7 +53,7 @@ export const SqlEditorCenterPanelHeader = () => {
         onClick={handleAddTab}
         variant="outline"
         size="icon"
-        className="hover:bg-sidebar-secondary-accent! mt-auto mr-4 size-9 rounded-tl-md rounded-tr-md rounded-b-none border-b-0 border-none transition-all"
+        className="hover:bg-hover! mt-auto mr-4 size-9 rounded-tl-md rounded-tr-md rounded-b-none border-b-0 border-none transition-all"
       >
         +
       </Button>

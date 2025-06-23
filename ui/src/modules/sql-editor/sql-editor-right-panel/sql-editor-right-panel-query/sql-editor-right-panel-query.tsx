@@ -30,7 +30,7 @@ export const SqlEditorRightPanelQuery = ({ query }: SqlEditorRightPanelQueriesPr
           <SidebarMenuButton
             isActive={query.id === selectedQueryRecord?.id}
             onClick={() => setSelectedQueryRecord(+worksheetId, query)}
-            className="hover:bg-sidebar-secondary-accent data-[active=true]:bg-sidebar-secondary-accent! data-[active=true]:font-light"
+            className="hover:bg-hover data-[active=true]:bg-hover! data-[active=true]:font-light"
           >
             <SqlEditorRightPanelQueryItem
               status={query.status}
@@ -46,12 +46,12 @@ export const SqlEditorRightPanelQuery = ({ query }: SqlEditorRightPanelQueriesPr
         </SidebarMenuItem>
       </HoverCardTrigger>
       <HoverCardContent className="flex size-full max-h-[220px] max-w-[400px] min-w-[240px] flex-1 flex-col p-1">
-        <div className="rounded bg-[#1F1F1F]">
+        <div className="bg-background-secondary rounded">
           <div className="mb-1 flex items-center justify-between p-2 pb-0">
             <Link to="/queries/$queryId" params={{ queryId: query.id.toString() }}>
               <Button
                 variant="outline"
-                className="hover:bg-sidebar-secondary-accent! h-7! justify-start bg-transparent! px-2!"
+                className="hover:bg-hover! h-7! justify-start bg-transparent! px-2!"
               >
                 <ExternalLink />
                 <span className="text-sm font-light">Open query details</span>
