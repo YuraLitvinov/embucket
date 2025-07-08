@@ -1,5 +1,6 @@
 use axum::Json;
 use axum::response::IntoResponse;
+use core_executor::SnowflakeError;
 use error_stack::ErrorExt;
 use http::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -97,23 +98,48 @@ impl IntoResponse for Error {
     #[tracing::instrument(
         name = "api-ui::Error::into_response",
         level = "info",
-        fields(status_code),
+        fields(error, error_stack_trace, status_code),
         skip(self)
     )]
     fn into_response(self) -> axum::response::Response {
-        tracing::error!("{}", self.output_msg());
-
         // Record the result as part of the current span.
-        tracing::Span::current().record("status_code", self.status_code().as_u16());
+        tracing::Span::current()
+            .record("error_stack_trace", self.output_msg())
+            .record("status_code", self.status_code().as_u16());
 
         let code = self.status_code();
-        let error = ErrorResponse {
-            message: self.to_string(),
-            status_code: code.as_u16(),
-        };
+        if let Self::Auth { source, .. } = self {
+            // no error added into span here and it's Ok
+            source.into_response()
+        } else {
+            let message = self.snowflake_error_message();
+            // Record the result as part of the current span.
+            tracing::Span::current().record("error", message.clone());
+            (
+                code,
+                Json(ErrorResponse {
+                    message,
+                    status_code: code.as_u16(),
+                }),
+            )
+                .into_response()
+        }
+    }
+}
+
+impl Error {
+    pub fn snowflake_error_message(self) -> String {
+        // acquire error str as later it will be moved
+        let error_str = self.to_string();
         match self {
-            Self::Auth { source, .. } => source.into_response(),
-            _ => (code, Json(error)).into_response(),
+            Self::QueriesError { source, .. } => match *source {
+                crate::queries::Error::Query {
+                    source: crate::queries::error::QueryError::Execution { source, .. },
+                    ..
+                } => SnowflakeError::from(source).to_string(),
+                _ => error_str,
+            },
+            _ => self.to_string(),
         }
     }
 }

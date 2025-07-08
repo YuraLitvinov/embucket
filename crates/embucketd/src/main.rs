@@ -166,8 +166,10 @@ async fn main() {
             SESSION_INACTIVITY_EXPIRATION_SECONDS,
         )));
 
-    let internal_router =
-        create_internal_router().with_state(InternalAppState::new(metastore.clone()));
+    let internal_router = create_internal_router().with_state(InternalAppState::new(
+        metastore.clone(),
+        history_store.clone(),
+    ));
     let ui_state = UIAppState::new(
         metastore.clone(),
         history_store,
