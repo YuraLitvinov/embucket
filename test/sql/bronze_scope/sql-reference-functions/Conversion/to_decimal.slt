@@ -1,3 +1,4 @@
+#Changed error from: 100039 (22003): Numeric value '12.3456' is out of range
 statement error
 WITH number_conv AS (
   SELECT column1 as expr FROM VALUES ('12.3456'), ('98.76546')
@@ -35,11 +36,13 @@ SELECT column1,
 ----
 $3,741.72	3741.72
 
+#Changed to error from: 2789
 statement error
 SELECT TO_DECIMAL('ae5', 'XXX')
 ----
 000200: Arrow error: Cast error: Cannot cast string 'ae5' to value of Decimal128(38, 10) type
 
+#Changed error from: 100140 (22007): Can't parse 'ae5' as number with format 'XX'
 statement error
 SELECT TO_DECIMAL('ae5', 'XX')
 ----

@@ -1,3 +1,4 @@
+#Changed error from: 100039 (22003): Numeric value '345.123' is out of range
 statement error
 SELECT column1 AS orig_string,
        TO_DECIMAL(column1) AS dec,
@@ -18,6 +19,7 @@ SELECT column1 AS orig_string,
 ----
 345.123	345	345.12	NULL
 
+#Changed error from: 100038 (22018): Numeric value '$7,543.21' is not recognized
 statement error
 SELECT column1 AS orig_string,
        TO_DECIMAL(column1, '$9,999.00') AS num,
