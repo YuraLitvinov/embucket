@@ -42,13 +42,6 @@ pub enum Error {
         location: Location,
     },
 
-    #[snafu(display("Unsupported format: {format}. Valid formats are HEX, BASE64, and UTF-8"))]
-    UnsupportedFormat {
-        format: String,
-        #[snafu(implicit)]
-        location: Location,
-    },
-
     #[snafu(display("Invalid boolean string: {v}"))]
     InvalidBooleanString {
         v: String,
@@ -158,6 +151,22 @@ pub enum Error {
     },
     #[snafu(display("Invalid datatype"))]
     InvalidDataType {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Unsupported format: {format}. Valid formats are {expected}."))]
+    UnsupportedFormat {
+        format: String,
+        expected: String,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Can't format value: {value}. Valid formats are {formats}."))]
+    UnsupportedValueFormat {
+        value: String,
+        formats: String,
         #[snafu(implicit)]
         location: Location,
     },
