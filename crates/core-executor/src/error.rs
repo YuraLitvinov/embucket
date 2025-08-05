@@ -14,6 +14,14 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[snafu(visibility(pub))]
 #[error_stack_trace::debug]
 pub enum Error {
+    #[snafu(display("Concurrency limit reached — too many concurrent queries are running"))]
+    ConcurrencyLimitError {
+        #[snafu(source)]
+        error: tokio::sync::TryAcquireError,
+        #[snafu(implicit)]
+        location: Location,
+    },
+
     #[snafu(display("Cannot register UDF functions"))]
     RegisterUDF {
         #[snafu(source(from(DataFusionError, Box::new)))]

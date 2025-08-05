@@ -25,7 +25,7 @@ use core_history::store::SlateDBHistoryStore;
 use core_metastore::{Metastore, SlateDBMetastore, TableIdent as MetastoreTableIdent};
 use core_utils::Db;
 use df_catalog::catalog_list::EmbucketCatalogList;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 use uuid::Uuid;
 
 #[async_trait::async_trait]
@@ -56,6 +56,7 @@ pub struct CoreExecutionService {
     config: Arc<Config>,
     catalog_list: Arc<EmbucketCatalogList>,
     runtime_env: Arc<RuntimeEnv>,
+    concurrency_limit: Arc<Semaphore>,
 }
 
 impl CoreExecutionService {
@@ -71,6 +72,7 @@ impl CoreExecutionService {
         config: Arc<Config>,
     ) -> Result<Self> {
         let catalog_list = Self::catalog_list(metastore.clone(), history_store.clone()).await?;
+        let max_concurrency_level = config.max_concurrency_level;
         let runtime_env = Self::runtime_env(&config, catalog_list.clone())?;
         Ok(Self {
             metastore,
@@ -79,6 +81,7 @@ impl CoreExecutionService {
             config,
             catalog_list,
             runtime_env,
+            concurrency_limit: Arc::new(Semaphore::new(max_concurrency_level)),
         })
     }
 
@@ -227,6 +230,17 @@ impl ExecutionService for CoreExecutionService {
         query: &str,
         query_context: QueryContext,
     ) -> Result<QueryResult> {
+        // Attempt to acquire a concurrency permit without waiting.
+        // This immediately returns an error if the concurrency limit has been reached.
+        // If you want the task to wait until a permit becomes available, use `.acquire().await` instead.
+
+        // Holding this permit ensures that no more than the configured number of concurrent queries
+        // can execute at the same time. When the permit is dropped, the slot is released back to the semaphore.
+        let _permit = self
+            .concurrency_limit
+            .try_acquire()
+            .context(ex_error::ConcurrencyLimitSnafu)?;
+
         let user_session = {
             let sessions = self.df_sessions.read().await;
             sessions
