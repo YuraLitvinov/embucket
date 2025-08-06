@@ -486,8 +486,22 @@ pub enum Error {
         location: Location,
     },
 
+
     #[snafu(display("Unexpected subquery result for set variable"))]
     UnexpectedSubqueryResultForSetVariable {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Stages are currently not supported"))]
+    StagesNotSupported {
+        #[snafu(implicit)]
+        location: Location,
+    },
+
+    #[snafu(display("Field '{field_name}' not found in input schema"))]
+    FieldNotFoundInInputSchema {
+        field_name: String,
         #[snafu(implicit)]
         location: Location,
     },

@@ -26,10 +26,17 @@ use core_metastore::{
 };
 use datafusion::arrow::array::{Int64Array, RecordBatch};
 use datafusion::arrow::datatypes::{DataType, Field, Schema as ArrowSchema, SchemaRef};
-use datafusion::catalog::MemoryCatalogProvider;
 use datafusion::catalog::{CatalogProvider, SchemaProvider};
+use datafusion::catalog::{MemoryCatalogProvider, TableProvider};
 use datafusion::datasource::DefaultTableSource;
 use datafusion::datasource::default_table_source::provider_as_source;
+use datafusion::datasource::file_format::FileFormat;
+use datafusion::datasource::file_format::csv::CsvFormat;
+use datafusion::datasource::file_format::json::JsonFormat;
+use datafusion::datasource::file_format::parquet::ParquetFormat;
+use datafusion::datasource::listing::{
+    ListingOptions, ListingTable, ListingTableConfig, ListingTableUrl,
+};
 use datafusion::execution::session_state::{SessionContextProvider, SessionState};
 use datafusion::logical_expr::{self, col};
 use datafusion::logical_expr::{LogicalPlan, TableSource};
@@ -45,7 +52,7 @@ use datafusion::sql::sqlparser::ast::{
 };
 use datafusion::sql::statement::object_name_to_string;
 use datafusion_common::{
-    DFSchema, DataFusionError, ParamValues, ResolvedTableReference, SchemaReference,
+    Column, DFSchema, DataFusionError, ParamValues, ResolvedTableReference, SchemaReference,
     TableReference, plan_datafusion_err,
 };
 use datafusion_expr::conditional_expressions::CaseBuilder;
@@ -89,8 +96,9 @@ use iceberg_rust::spec::values::Value as IcebergValue;
 use iceberg_rust::table::manifest_list::snapshot_partition_bounds;
 use object_store::ObjectStore;
 use object_store::aws::AmazonS3Builder;
-use snafu::ResultExt;
+use snafu::{OptionExt, ResultExt};
 use sqlparser::ast::helpers::key_value_options::KeyValueOptions;
+use sqlparser::ast::helpers::stmt_data_loading::StageParamsObject;
 use sqlparser::ast::{
     AssignmentTarget, CloudProviderParams, MergeAction, MergeClause, MergeClauseKind,
     MergeInsertKind, ObjectNamePart, ObjectType, OneOrManyWithParens, PivotValueSource,
@@ -807,7 +815,7 @@ impl UserQuery {
                 name,
                 provider_as_source(target_table),
                 WriteOp::Insert(InsertOp::Append),
-                cast_input_to_target_schema(input, &schema)?,
+                Arc::new(cast_input_to_target_schema(input, &schema)?),
             ));
             return self.execute_logical_plan(insert_plan).await;
         }
@@ -1098,22 +1106,86 @@ impl UserQuery {
         err
     )]
     pub async fn copy_into_snowflake_query(&self, statement: Statement) -> Result<QueryResult> {
-        let Statement::CopyIntoSnowflake { into, from_obj, .. } = statement else {
+        let Statement::CopyIntoSnowflake {
+            into,
+            from_obj,
+            from_obj_alias,
+            stage_params,
+            file_format,
+            ..
+        } = statement
+        else {
             return ex_error::OnlyCopyIntoStatementsSnafu.fail();
         };
-        if let Some(from_obj) = from_obj {
-            let from_stage: Vec<ObjectNamePart> = from_obj
-                .0
-                .iter()
-                .map(|fs| ObjectNamePart::Identifier(Ident::new(fs.to_string().replace('@', ""))))
-                .collect();
-            let insert_into = self.resolve_table_object_name(into.0)?;
-            let insert_from = self.resolve_table_object_name(from_stage)?;
-            // Insert data to table
-            let insert_query = format!("INSERT INTO {insert_into} SELECT * FROM {insert_from}");
-            self.execute_with_custom_plan(&insert_query).await
+        let Some(from_obj) = from_obj else {
+            return ex_error::FromObjectRequiredForCopyIntoStatementsSnafu.fail();
+        };
+
+        let insert_into = self.resolve_table_object_name(into.0)?;
+
+        // Check if this copies from an external location
+        if let Some(location) = get_external_location(&from_obj) {
+            let insert_reference: datafusion_common::TableReference = (&insert_into).into();
+
+            let into_provider = self
+                .session
+                .ctx
+                .table_provider(insert_reference.clone())
+                .await
+                .context(ex_error::DataFusionSnafu)?;
+
+            let object_store = self
+                .get_object_store_from_stage_params(stage_params)
+                .await?;
+
+            let url = ListingTableUrl::parse(&location.value).context(ex_error::DataFusionSnafu)?;
+            self.session
+                .ctx
+                .register_object_store(url.object_store().as_ref(), object_store);
+
+            let config = self
+                .build_listing_table_config(file_format, &into_provider, url)
+                .await?;
+
+            let table_provider =
+                ListingTable::try_new(config).context(ex_error::DataFusionSnafu)?;
+
+            let builder = LogicalPlanBuilder::scan(
+                "external_location",
+                Arc::new(DefaultTableSource::new(Arc::new(table_provider))),
+                None,
+            )
+            .context(ex_error::DataFusionSnafu)?;
+
+            let builder = if let Some(alias) = from_obj_alias {
+                builder
+                    .alias(alias.to_string())
+                    .context(ex_error::DataFusionSnafu)?
+            } else {
+                builder
+            };
+
+            let input = builder.build().context(ex_error::DataFusionSnafu)?;
+
+            let input = if input.schema().as_arrow() == &*into_provider.schema() {
+                input
+            } else {
+                cast_input_to_target_schema(Arc::new(input), &into_provider.schema())?
+            };
+
+            let plan = LogicalPlanBuilder::insert_into(
+                input,
+                insert_reference,
+                Arc::new(DefaultTableSource::new(into_provider)),
+                InsertOp::Append,
+            )
+            .context(ex_error::DataFusionSnafu)?
+            .build()
+            .context(ex_error::DataFusionSnafu)?;
+
+            self.execute_logical_plan(plan).await
         } else {
-            ex_error::FromObjectRequiredForCopyIntoStatementsSnafu.fail()
+            ex_error::StagesNotSupportedSnafu.fail()
         }
     }
 
@@ -2445,6 +2517,53 @@ impl UserQuery {
             ..target_ref.clone()
         })
     }
+
+    async fn get_object_store_from_stage_params(
+        &self,
+        stage_params: StageParamsObject,
+    ) -> Result<Arc<dyn ObjectStore + 'static>> {
+        let object_store = match (stage_params.storage_integration, stage_params.credentials) {
+            (Some(volume), _) => {
+                let volume = self
+                    .metastore
+                    .get_volume(&volume)
+                    .await
+                    .context(ex_error::MetastoreSnafu)?
+                    .context(ex_error::VolumeNotFoundSnafu { volume })?;
+                volume
+                    .get_object_store()
+                    .context(ex_error::MetastoreSnafu)?
+            }
+            (None, _) => {
+                todo!()
+            }
+        };
+        Ok(object_store)
+    }
+
+    async fn build_listing_table_config(
+        &self,
+        file_format: KeyValueOptions,
+        into_provider: &Arc<dyn TableProvider>,
+        url: ListingTableUrl,
+    ) -> Result<ListingTableConfig> {
+        let config = ListingTableConfig::new(url.clone());
+        let config = if let Some((format, infer_schema)) = create_file_format(&file_format)? {
+            let options = ListingOptions::new(format);
+            let schema = if infer_schema {
+                options
+                    .infer_schema(&self.session.ctx.state(), &url)
+                    .await
+                    .context(ex_error::DataFusionSnafu)?
+            } else {
+                into_provider.schema()
+            };
+            config.with_listing_options(options).with_schema(schema)
+        } else {
+            config
+        };
+        Ok(config)
+    }
 }
 
 /// Builds a target schema with metadata columns added.
@@ -2866,27 +2985,104 @@ fn apply_show_filters(sql: String, filters: &[String]) -> String {
 pub fn cast_input_to_target_schema(
     input: Arc<LogicalPlan>,
     target_schema: &SchemaRef,
-) -> Result<Arc<LogicalPlan>> {
-    let input_schema = input.schema().as_arrow();
+) -> Result<LogicalPlan> {
+    let input_schema = input.schema();
     let mut projections: Vec<DFExpr> = Vec::with_capacity(target_schema.fields().len());
 
     for field in target_schema.fields() {
         let name = field.name();
         let data_type = field.data_type();
-        let input_field = input_schema
-            .field_with_name(name)
-            .context(ex_error::ArrowSnafu)?;
+        let (reference, input_field) = get_field(input_schema, name)?;
         if input_field.data_type() == data_type {
-            projections.push(col(name));
-        } else {
+            if input_field.name() == name {
+                projections.push(col(name));
+            } else {
+                projections.push(
+                    logical_expr::Expr::Column(Column::new(reference.cloned(), input_field.name()))
+                        .alias(name),
+                );
+            }
+        } else if input_field.name() == name {
             projections.push(DFExpr::TryCast(TryCast::new(
                 Box::new(col(name)),
+                data_type.clone(),
+            )));
+        } else {
+            projections.push(DFExpr::TryCast(TryCast::new(
+                Box::new(
+                    logical_expr::Expr::Column(Column::new(reference.cloned(), input_field.name()))
+                        .alias(name),
+                ),
                 data_type.clone(),
             )));
         }
     }
     let projection = Projection::try_new(projections, input).context(ex_error::DataFusionSnafu)?;
-    Ok(Arc::new(LogicalPlan::Projection(projection)))
+    Ok(LogicalPlan::Projection(projection))
+}
+
+fn get_field<'a>(
+    input_schema: &'a Arc<DFSchema>,
+    name: &str,
+) -> Result<(Option<&'a TableReference>, &'a Field)> {
+    let (reference, input_field) = input_schema
+        .qualified_fields_with_unqualified_name(name)
+        .pop()
+        .or_else(|| {
+            // If exact match fails, try case-insensitive matching
+            let name_lower = name.to_lowercase();
+            for (reference, field) in input_schema.iter() {
+                if field.name().to_lowercase() == name_lower {
+                    return Some((reference, field));
+                }
+            }
+            None
+        })
+        .context(ex_error::FieldNotFoundInInputSchemaSnafu {
+            field_name: name.to_string(),
+        })?;
+    Ok((reference, input_field))
+}
+
+/// Checks if the `ObjectName` indicates an external location for a Snowflake COPY INTO statement.
+///
+/// This function validates that the object name represents a valid external location by checking:
+/// - The object name contains exactly one identifier
+/// - The identifier is single-quoted
+/// - The identifier value starts with a supported scheme (s3://, gcs://, file://, or memory://)
+///
+/// External locations allow loading files directly from cloud storage or file systems
+/// without requiring a stage. See: <https://docs.snowflake.com/en/sql-reference/sql/copy-into-table#loading-files-directly-from-an-external-location>
+///
+/// # Arguments
+/// * `from_obj` - The object name from the COPY INTO FROM clause
+///
+/// # Returns
+/// * `Some(&Ident)` - The identifier containing the external location if valid
+/// * `None` - If the object name doesn't represent a valid external location
+fn get_external_location(from_obj: &ObjectName) -> Option<&Ident> {
+    if let (Some(location), true, true, true) = (
+        from_obj.0[0].as_ident(),
+        from_obj.0.len() == 1,
+        from_obj.0[0]
+            .as_ident()
+            .and_then(|x| x.quote_style)
+            .is_some_and(|x| x == '\''),
+        from_obj.0[0]
+            .as_ident()
+            .as_ref()
+            .map(|x| &x.value)
+            .is_some_and(|x| {
+                x.starts_with("s3://")
+                    || x.starts_with("gcs://")
+                    || x.starts_with("file://")
+                    || x.starts_with("memory://")
+            }),
+    ) {
+        Some(location)
+    } else {
+        None
+    }
 }
 
 pub fn get_volume_kv_option(
@@ -2909,5 +3105,54 @@ pub fn get_volume_kv_option(
         .fail()
     } else {
         Ok(value)
+    }
+}
+
+#[must_use]
+pub fn get_kv_option<'a>(options: &'a KeyValueOptions, key: &str) -> Option<&'a str> {
+    options
+        .options
+        .iter()
+        .find(|opt| opt.option_name.eq_ignore_ascii_case(key))
+        .map(|opt| opt.value.as_str())
+}
+
+fn create_file_format(
+    file_format: &KeyValueOptions,
+) -> Result<Option<(Arc<dyn FileFormat>, bool)>> {
+    if let Some(format_type) = get_kv_option(file_format, "type") {
+        if format_type.eq_ignore_ascii_case("parquet") {
+            Ok(Some((Arc::new(ParquetFormat::default()), true)))
+        } else if format_type.eq_ignore_ascii_case("csv") {
+            let infer_schema = get_kv_option(file_format, "parse_header")
+                .is_some_and(|x| x.to_lowercase() == "true");
+            let has_header =
+                get_kv_option(file_format, "skip_header").is_some_and(|x| x.to_lowercase() == "1");
+
+            let csv_format = CsvFormat::default().with_has_header(has_header);
+
+            // Handle field_delimiter parameter
+            let csv_format = if let Some(delimiter) = get_kv_option(file_format, "field_delimiter")
+            {
+                if delimiter.len() == 1 {
+                    csv_format.with_delimiter(delimiter.as_bytes()[0])
+                } else {
+                    csv_format
+                }
+            } else {
+                csv_format
+            };
+
+            Ok(Some((Arc::new(csv_format), infer_schema)))
+        } else if format_type.eq_ignore_ascii_case("json") {
+            Ok(Some((Arc::new(JsonFormat::default()), true)))
+        } else {
+            ex_error::UnsupportedFileFormatSnafu {
+                format: format_type,
+            }
+            .fail()
+        }
+    } else {
+        Ok(None)
     }
 }
