@@ -72,3 +72,4 @@ Static assets, like favicons, can be placed in the `public/` directory.
 - [Astro Starlight](https://starlight.astro.build)
 - [Tailwind](https://tailwindcss.com)
 - [Prettier](https://prettier.io)
+- [Vale](https://vale.sh)
