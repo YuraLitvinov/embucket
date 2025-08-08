@@ -16,12 +16,13 @@ use std::any::Any;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-/// `REGEXP_SUBSTR` function implementation
+/// `REGEXP_SUBSTR_ALL` function implementation
 ///
-/// Returns the position of the specified occurrence of the regular expression pattern in the string subject.
-/// If no match is found, returns 0.
+/// Returns an ARRAY that contains all substrings that match a regular expression within a string.
+/// The function returns a value of type ARRAY. The array contains an element for each matching substring.
+/// The function returns an empty array if no match is found.
 ///
-/// Syntax: `REGEXP_SUBSTR( <subject> , <pattern> [ , <position> [ , <occurrence> [ , <regex_parameters> [ , <group_num> ] ] ] ] )`
+/// Syntax: `REGEXP_SUBSTR_ALL( <subject> , <pattern> [ , <position> [ , <occurrence> [ , <regex_parameters> [ , <group_num> ] ] ] ] )`
 ///
 /// Arguments:
 ///
@@ -53,19 +54,20 @@ use std::sync::Arc;
 ///   If a `group_num` is specified, it allows extraction even if the e option was not also specified.
 ///   The e option is implied.
 ///
-/// Example: `REGEXP_SUBSTR('nevermore1, nevermore2, nevermore3.', 'nevermore')`
+/// Example: `REGEXP_SUBSTR_ALL('nevermore1, nevermore2, nevermore3.', 'nevermore')`
 #[derive(Debug)]
-pub struct RegexpSubstrFunc {
+pub struct RegexpSubstrAllFunc {
     signature: Signature,
+    aliases: Vec<String>,
 }
 
-impl Default for RegexpSubstrFunc {
+impl Default for RegexpSubstrAllFunc {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl RegexpSubstrFunc {
+impl RegexpSubstrAllFunc {
     pub fn new() -> Self {
         Self {
             signature: Signature::one_of(
@@ -103,6 +105,7 @@ impl RegexpSubstrFunc {
                 ],
                 Volatility::Immutable,
             ),
+            aliases: vec![String::from("regexp_extract_all")],
         }
     }
     #[allow(clippy::too_many_lines, clippy::unwrap_used)]
@@ -213,13 +216,13 @@ impl RegexpSubstrFunc {
     }
 }
 
-impl ScalarUDFImpl for RegexpSubstrFunc {
+impl ScalarUDFImpl for RegexpSubstrAllFunc {
     fn as_any(&self) -> &dyn Any {
         self
     }
 
     fn name(&self) -> &'static str {
-        "regexp_substr"
+        "regexp_substr_all"
     }
 
     fn signature(&self) -> &Signature {
@@ -280,14 +283,33 @@ impl ScalarUDFImpl for RegexpSubstrFunc {
                 let string_array: &StringArray = as_generic_string_array(array)?;
                 let regex = pattern_to_regex(pattern, regex_parameters)
                     .context(regexp_errors::UnsupportedRegexSnafu)?;
-                regexp(string_array, &regex, position).for_each(|opt_iter| {
-                    result_array.append_option(opt_iter.and_then(|mut cap_iter| {
-                        cap_iter.nth(occurrence).and_then(|cap| {
-                            //group_num == 0, means get the whole match (seems docs in regex are incorrect)
-                            cap.get(group_num).map(|mat| mat.as_str())
-                        })
-                    }));
-                });
+                regexp(string_array, &regex, position)
+                    .enumerate()
+                    .for_each(|(index, opt_iter)| {
+                        result_array.append_option(opt_iter.map(|cap_iter| {
+                            //Can't panic
+                            let mut result =
+                                String::with_capacity(string_array.value(index).len()) + "[";
+                            cap_iter.skip(occurrence).for_each(|cap| {
+                                //group_num == 0, means get the whole match (seems docs in regex are incorrect)
+                                if let Some(mat) = cap.get(group_num) {
+                                    result += "\"";
+                                    result += mat.as_str();
+                                    result += "\",";
+                                }
+                            });
+                            //to avoid an `if > 0` in for each match, we remove the last ","
+                            if result.len() > 1 {
+                                result.pop();
+                            }
+                            result += "]";
+                            //Only reallocate if we are smaller then or equal 50% of the capacity,
+                            if result.capacity() / 2 >= result.len() {
+                                result.shrink_to_fit();
+                            }
+                            result
+                        }));
+                    });
             }
             other => regexp_errors::UnsupportedInputTypeWithPositionSnafu {
                 position: 1usize,
@@ -297,5 +319,8 @@ impl ScalarUDFImpl for RegexpSubstrFunc {
         }
 
         Ok(ColumnarValue::Array(Arc::new(result_array.finish())))
+    }
+    fn aliases(&self) -> &[String] {
+        &self.aliases
     }
 }
