@@ -1,12 +1,12 @@
-name: DBT Gitlab run
+name: DBT Snowplow Web run
 
 permissions:
   contents: write
   
 on:
   schedule:
-    # Runs every day at 4 AM UTC
-    - cron: '0 4 * * *'
+    # Runs every day at 2 AM UTC
+    - cron: '0 2 * * *'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
@@ -15,7 +15,7 @@ concurrency:
 jobs:
   sql-logic-tests:
     runs-on: ubuntu-latest
-    name: DBT Gitlab run
+    name: DBT Snowplow Web run
     steps:
       - uses: actions/checkout@v4
         with:
@@ -35,19 +35,14 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Create assets dir
-        working-directory: ./test/dbt_integration_tests/dbt-gitlab
+      - name: DBT Snowplow Web run
+        working-directory: ./test/dbt_integration_tests/dbt-snowplow-web
         run: |
-          mkdir assets
-
-      - name: DBT Gitlab run
-        working-directory: ./test/dbt_integration_tests/dbt-gitlab
-        run: |
-          ./run.sh --target embucket
+          ./run_snowplow_web.sh
 
       # Generate Test Assets
       - name: Generate data for commit message
-        working-directory: ./test/dbt_integration_tests/dbt-gitlab
+        working-directory: ./test/dbt_integration_tests/dbt-snowplow-web/dbt-snowplow-web
         run: |
           
           # Get coverage percentage for commit message
@@ -58,30 +53,33 @@ jobs:
       - name: Push Assets to Branch
         run: |
           # Copy test assets and statistics file to a temporary location before switching branches
-          mkdir -p /tmp/embucket-assets
-          cp -r test/dbt_integration_tests/dbt-gitlab/assets/* /tmp/embucket-assets/
-          rm -rf test/dbt_integration_tests/dbt-gitlab/assets/
+          mkdir -p /tmp/embucket-assets-snowplow
+          cp -r test/dbt_integration_tests/dbt-snowplow-web/dbt-snowplow-web/assets/* /tmp/embucket-assets-snowplow/
+          rm -rf test/dbt_integration_tests/dbt-snowplow-web/dbt-snowplow-web/assets/
         
           # Setup git
           git config --global user.name "github-actions[bot]"
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
         
-          # Fetch and checkout the existing assets branch
+                    # Fetch and checkout the existing assets branch
           git fetch origin assets_dbt
-          git checkout assets_dbt
-        
-          # Clean the branch content (but keep .git folder)
-          # find . -mindepth 1 -not -path "./.git*" -delete
-        
+          git checkout assets_dbt || git checkout -b assets_dbt
+          # Note: .git folder is preserved when switching branches in the same repo
+          
+          # Clean only the snowplow assets directory (preserve .git and other directories)
+          if [ -d "assets_dbt_snowplow" ]; then
+            rm -rf assets_dbt_snowplow
+          fi
+          
           # Create assets directory
-          mkdir -p assets_dbt
-        
+          mkdir -p assets_dbt_snowplow
+          
           # Copy assets from the temporary location
-          cp -r /tmp/embucket-assets/* assets_dbt/
-        
+          cp -r /tmp/embucket-assets-snowplow/* assets_dbt_snowplow/
+          
           # Add and commit
-          git add assets_dbt
-          git commit -m "Update test assets [DBT Gitlab run result: $COVERAGE%] [skip ci]" || echo "No changes to commit"
-        
+          git add assets_dbt_snowplow
+          git commit -m "Update test assets [DBT Snowplow Web run result: $COVERAGE%] [skip ci]" || echo "No changes to commit"
+          
           # Push to the existing assets branch
           git push origin assets_dbt
