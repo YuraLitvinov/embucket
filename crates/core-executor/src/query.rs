@@ -1314,13 +1314,11 @@ impl UserQuery {
             .get_iceberg_table_provider(
                 &target_ident,
                 Some(
-                    //TODO Return proper Error
-                    #[allow(clippy::unwrap_used)]
                     DataFusionTableConfigBuilder::default()
                         .enable_data_file_path_column(true)
                         .enable_manifest_file_path_column(true)
                         .build()
-                        .unwrap(),
+                        .context(ex_error::IcebergSnafu)?,
                 ),
             )
             .await?;
