@@ -1,10 +1,51 @@
 use crate::visitors::{
     fetch_to_limit, functions_rewriter, inline_aliases_in_query, json_element, qualify_in_query,
-    select_expr_aliases, table_functions, table_functions_cte_relation,
+    rlike_regexp_expr_rewriter, select_expr_aliases, table_functions, table_functions_cte_relation,
 };
 use datafusion::prelude::SessionContext;
 use datafusion::sql::parser::Statement as DFStatement;
 use datafusion_common::Result as DFResult;
+
+#[test]
+fn test_rlike_regexp_expr_rewriter() -> DFResult<()> {
+    let state = SessionContext::new().state();
+    let cases = vec![
+        (
+            "SELECT 'nevermore' RLIKE 'never'",
+            "SELECT regexp_like('nevermore', 'never')",
+        ),
+        (
+            "SELECT 'nevermore' REGEXP 'never'",
+            "SELECT regexp_like('nevermore', 'never')",
+        ),
+        (
+            "SELECT 'nevermore' NOT RLIKE 'never'",
+            "SELECT NOT regexp_like('nevermore', 'never')",
+        ),
+        (
+            "SELECT 'nevermore' NOT REGEXP 'never'",
+            "SELECT NOT regexp_like('nevermore', 'never')",
+        ),
+        //the `values` will be put inside the `()`, not by the rewriter
+        (
+            "SELECT column1 FROM VALUES ('San Francisco'), ('San Jose'), ('Santa Clara'), ('Sacramento') WHERE column1 RLIKE 'San* [fF].*'",
+            "SELECT column1 FROM (VALUES ('San Francisco'), ('San Jose'), ('Santa Clara'), ('Sacramento')) WHERE regexp_like(column1, 'San* [fF].*')",
+        ),
+        (
+            "SELECT column1 FROM VALUES ('San Francisco'), ('San Jose'), ('Santa Clara'), ('Sacramento') WHERE column1 NOT RLIKE 'San* [fF].*'",
+            "SELECT column1 FROM (VALUES ('San Francisco'), ('San Jose'), ('Santa Clara'), ('Sacramento')) WHERE NOT regexp_like(column1, 'San* [fF].*')",
+        ),
+    ];
+
+    for (input, expected) in cases {
+        let mut statement = state.sql_to_statement(input, "snowflake")?;
+        if let DFStatement::Statement(ref mut stmt) = statement {
+            rlike_regexp_expr_rewriter::visit(stmt);
+        }
+        assert_eq!(statement.to_string(), expected);
+    }
+    Ok(())
+}
 
 #[test]
 fn test_json_element() -> DFResult<()> {
