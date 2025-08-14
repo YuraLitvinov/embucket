@@ -1,3 +1,4 @@
+use super::snowflake_error::SnowflakeError;
 use datafusion_common::DataFusionError;
 use df_catalog::error::Error as CatalogError;
 use error_stack_trace;
@@ -147,7 +148,7 @@ pub enum Error {
         location: Location,
     },
 
-    #[snafu(display("DataFusion erro when building logical plan for join of merge target and source: {error}"))]
+    #[snafu(display("DataFusion error when building logical plan for join of merge target and source: {error}"))]
     DataFusionLogicalPlanMergeJoin {
         #[snafu(source(from(DataFusionError, Box::new)))]
         error: Box<DataFusionError>,
@@ -511,6 +512,13 @@ pub enum Error {
         #[snafu(implicit)]
         location: Location,
     },
+}
+
+impl Error {
+    #[must_use]
+    pub fn to_snowflake_error(&self) -> SnowflakeError {
+        SnowflakeError::from_executor_error(self)
+    }
 }
 
 #[derive(Debug)]

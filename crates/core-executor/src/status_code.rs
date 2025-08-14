@@ -1,0 +1,23 @@
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+pub enum StatusCode {
+    Db,
+    Metastore = 101,
+    ObjectStore = 201,
+    Datafusion = 301,
+    DataFusionSql = 401,
+    DatafusionEmbucketFn = 501,
+    DatafusionEmbucketFnAggregate,
+    DatafusionEmbucketFnConversion,
+    DatafusionEmbucketFnDateTime,
+    DatafusionEmbucketFnNumeric,
+    DatafusionEmbucketFnSemiStructured,
+    DatafusionEmbucketFnStringBinary,
+    DatafusionEmbucketFnTable,
+    DatafusionEmbucketFnCrate,
+    DatafusionEmbucketFnRegexp,
+    Arrow = 601,
+    Catalog = 701,
+    Iceberg = 801,
+    Internal = 901,
+    Other = 10001,
+}

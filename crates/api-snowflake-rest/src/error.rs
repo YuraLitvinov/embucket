@@ -1,7 +1,8 @@
 use crate::schemas::JsonResponse;
 use axum::{Json, http, response::IntoResponse};
-use core_executor::SnowflakeError;
+use core_executor::status_code::StatusCode;
 use datafusion::arrow::error::ArrowError;
+use error_stack::ErrorChainExt;
 use error_stack::ErrorExt;
 use error_stack_trace;
 use snafu::Location;
@@ -108,30 +109,26 @@ impl IntoResponse for Error {
     #[tracing::instrument(
         name = "api_snowflake_rest::Error::into_response",
         level = "info",
-        fields(display_error, debug_error, error_stack_trace, status_code),
+        fields(
+            display_error,
+            debug_error,
+            error_stack_trace,
+            error_chain,
+            status_code
+        ),
         skip(self)
     )]
     #[allow(clippy::too_many_lines)]
     fn into_response(self) -> axum::response::Response<axum::body::Body> {
         // Record the result as part of the current span.
-        tracing::Span::current().record("error_stack_trace", self.output_msg());
+        tracing::Span::current()
+            .record("error_stack_trace", self.output_msg())
+            .record("error_chain", self.error_chain());
 
         let status_code = match &self {
-            Self::Execution { source } => match source {
-                core_executor::Error::Arrow { .. }
-                | core_executor::Error::SerdeParse { .. }
-                | core_executor::Error::CatalogListDowncast { .. }
-                | core_executor::Error::CatalogDownCast { .. }
-                | core_executor::Error::DataFusionLogicalPlanMergeTarget { .. }
-                | core_executor::Error::DataFusionLogicalPlanMergeSource { .. }
-                | core_executor::Error::DataFusionLogicalPlanMergeJoin { .. }
-                | core_executor::Error::LogicalExtensionChildCount { .. }
-                | core_executor::Error::MergeFilterStreamNotMatching { .. }
-                | core_executor::Error::MatchingFilesAlreadyConsumed { .. }
-                | core_executor::Error::MissingFilterPredicates { .. }
-                | core_executor::Error::RegisterCatalog { .. } => {
-                    http::StatusCode::INTERNAL_SERVER_ERROR
-                }
+            Self::Execution { source } => match source.to_snowflake_error().status_code() {
+                StatusCode::Internal => http::StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::ObjectStore => http::StatusCode::SERVICE_UNAVAILABLE,
                 _ => http::StatusCode::OK,
             },
             Self::GZipDecompress { .. }
@@ -148,10 +145,11 @@ impl IntoResponse for Error {
             | Self::NotImplemented { .. } => http::StatusCode::OK,
         };
 
-        let (mut display_error, debug_error) = self.display_debug_error_messages();
-        if status_code == http::StatusCode::INTERNAL_SERVER_ERROR {
-            display_error = "Internal server error".to_string();
-        }
+        let (display_error, debug_error) = self.display_debug_error_messages();
+        // Give more context to user, not just "Internal server error"
+        // if status_code == http::StatusCode::INTERNAL_SERVER_ERROR {
+        //     display_error = "Internal server error".to_string();
+        // }
 
         // Record the result as part of the current span.
         tracing::Span::current()
@@ -175,7 +173,7 @@ impl Error {
     pub fn display_debug_error_messages(self) -> (String, String) {
         // acquire error str as later it will be moved
         if let Self::Execution { source, .. } = self {
-            SnowflakeError::from(source).display_debug_error_messages()
+            source.to_snowflake_error().display_debug_error_messages()
         } else {
             (self.to_string(), format!("{self:?}"))
         }
