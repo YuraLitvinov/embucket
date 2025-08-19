@@ -74,6 +74,64 @@ These technology choices differ structurally:
 
 - **Different error format**: Error messages don't match Snowflake's format
 
+### Backslash escaping
+
+Embucket handles backslash escaping in string literals differently than Snowflake. This affects how you write queries that include backslashes or special characters in strings.
+
+**Key differences:**
+
+- **Escape character interpretation**: Snowflake treats single backslashes literally in most cases, while Embucket interprets them as escape characters
+- **Backslash repetition**: You need more backslashes in Embucket to achieve the same result as Snowflake
+- **Error handling**: Some backslash patterns that work in Snowflake cause errors in Embucket
+
+#### Getting literal backslashes
+
+**Snowflake:**
+
+```sql
+SELECT * FROM VALUES ('\\b');
+-- Returns: \b
+```
+
+**Embucket:**
+
+```sql
+SELECT * FROM VALUES ('\\\\b');
+-- Returns: \b
+```
+
+#### Handling special characters
+
+**Snowflake:**
+
+```sql
+SELECT * FROM VALUES ('\b');
+-- Returns: \x08 (backspace character, may appear as broken symbol)
+```
+
+**Embucket:**
+
+```sql
+SELECT * FROM VALUES ('\b');
+-- Returns: \x08 (backspace character, may not display in UI)
+```
+
+#### Single trailing backslash
+
+**Snowflake:**
+
+```sql
+SELECT * FROM VALUES ('\\');
+-- Returns: \
+```
+
+**Embucket:**
+
+```sql
+SELECT * FROM VALUES ('\\');
+-- Error: Unterminated string literal
+```
+
 ## VARIANT data type support
 
 Embucket implements VARIANT as JSON-serialized `TEXT` on the storage layer. This approach becomes necessary because Parquet, Iceberg, and Arrow don't support VARIANT natively.
