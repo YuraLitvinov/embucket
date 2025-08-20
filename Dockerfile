@@ -1,7 +1,6 @@
 # Multi-stage Dockerfile optimized for caching and minimal final image size
-ARG RUST_VERSION=latest
+FROM rust:bookworm AS builder
 
-FROM rust:${RUST_VERSION} AS builder
 WORKDIR /app
 
 # Install required system dependencies
