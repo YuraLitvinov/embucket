@@ -566,9 +566,10 @@ impl UserQuery {
                 .table(&resolved.table)
                 .await
                 .context(ex_error::DataFusionSnafu)?
-                .context(ex_error::TableNotFoundSnafu {
+                .context(ex_error::TableNotFoundInSchemaInDatabaseSnafu {
                     table: &resolved.table.to_string(),
                     schema: &resolved.schema.to_string(),
+                    db: &resolved.catalog.to_string(),
                 })?;
         }
         self.status_response()
@@ -646,12 +647,27 @@ impl UserQuery {
                         table: ident.name().to_string(),
                     }))
                     .await?;
-                } else if !if_exists {
+                } else if let Some(IcebergError::NotFound(_)) = table_resp.as_ref().err() {
                     // Check if the schema exists first
-                    iceberg_catalog
+                    if iceberg_catalog
                         .load_namespace(ident.namespace())
                         .await
-                        .context(ex_error::IcebergSnafu)?;
+                        .is_err()
+                    {
+                        ex_error::SchemaNotFoundInDatabaseSnafu {
+                            schema: schema_name,
+                            db: catalog_name.to_string(),
+                        }
+                        .fail()?;
+                    } else if !if_exists {
+                        ex_error::TableNotFoundInSchemaInDatabaseSnafu {
+                            table: ident.name().to_string(),
+                            schema: schema_name,
+                            db: catalog_name.to_string(),
+                        }
+                        .fail()?;
+                    }
+                } else {
                     // return original error, since schema exists
                     table_resp.context(ex_error::IcebergSnafu)?;
                 }
@@ -1502,7 +1518,7 @@ impl UserQuery {
         self.created_entity_response()
     }
 
-    #[instrument(name = "UserQuery::create_schema", level = "trace", skip(self), err)]
+    #[instrument(name = "UserQuery::create_view", level = "trace", skip(self), err)]
     pub async fn create_view(&self, statement: Statement) -> Result<QueryResult> {
         let mut plan = self.sql_statement_to_plan(statement).await?;
         match &mut plan {
