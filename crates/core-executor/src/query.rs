@@ -23,6 +23,7 @@ use core_metastore::{
     AwsAccessKeyCredentials, AwsCredentials, FileVolume, Metastore, S3TablesVolume, S3Volume,
     SchemaIdent as MetastoreSchemaIdent, TableCreateRequest as MetastoreTableCreateRequest,
     TableFormat as MetastoreTableFormat, TableIdent as MetastoreTableIdent, Volume, VolumeType,
+    models::volumes::create_object_store_from_url,
 };
 use datafusion::arrow::array::{Int64Array, RecordBatch};
 use datafusion::arrow::datatypes::{DataType, Field, Schema as ArrowSchema, SchemaRef};
@@ -91,8 +92,8 @@ use iceberg_rust::spec::table_metadata::TableMetadata;
 use iceberg_rust::spec::types::StructType;
 use iceberg_rust::spec::values::Value as IcebergValue;
 use iceberg_rust::table::manifest_list::snapshot_partition_bounds;
-use object_store::ObjectStore;
-use object_store::aws::AmazonS3Builder;
+use object_store::aws::{AmazonS3Builder, resolve_bucket_region};
+use object_store::{ClientOptions, ObjectStore};
 use snafu::{OptionExt, ResultExt};
 use sqlparser::ast::helpers::key_value_options::KeyValueOptions;
 use sqlparser::ast::helpers::stmt_data_loading::StageParamsObject;
@@ -1118,11 +1119,12 @@ impl UserQuery {
                 .await
                 .context(ex_error::DataFusionSnafu)?;
 
+            let url = ListingTableUrl::parse(&location.value).context(ex_error::DataFusionSnafu)?;
+
             let object_store = self
-                .get_object_store_from_stage_params(stage_params)
+                .get_object_store_from_stage_params(stage_params, &url)
                 .await?;
 
-            let url = ListingTableUrl::parse(&location.value).context(ex_error::DataFusionSnafu)?;
             self.session
                 .ctx
                 .register_object_store(url.object_store().as_ref(), object_store);
@@ -2516,24 +2518,72 @@ impl UserQuery {
     async fn get_object_store_from_stage_params(
         &self,
         stage_params: StageParamsObject,
+        url: &ListingTableUrl,
     ) -> Result<Arc<dyn ObjectStore + 'static>> {
-        let object_store = match (stage_params.storage_integration, stage_params.credentials) {
+        match (&stage_params.storage_integration, &stage_params.credentials) {
             (Some(volume), _) => {
                 let volume = self
                     .metastore
-                    .get_volume(&volume)
+                    .get_volume(volume)
                     .await
                     .context(ex_error::MetastoreSnafu)?
                     .context(ex_error::VolumeNotFoundSnafu { volume })?;
-                volume
+                Ok(volume
                     .get_object_store()
-                    .context(ex_error::MetastoreSnafu)?
+                    .context(ex_error::MetastoreSnafu)?)
             }
-            (None, _) => {
-                todo!()
+            (None, credentials) if !credentials.options.is_empty() => {
+                // Create object store from credentials
+                let access_key_id = get_kv_option(credentials, "AWS_KEY_ID");
+                let secret_access_key = get_kv_option(credentials, "AWS_SECRET_KEY");
+                let session_token = get_kv_option(credentials, "AWS_SESSION_TOKEN");
+
+                if let (Some(access_key), Some(secret_key)) = (access_key_id, secret_access_key) {
+                    let object_store_url = url.object_store();
+                    let bucket = object_store_url
+                        .as_str()
+                        .trim_start_matches("s3://")
+                        .trim_end_matches('/');
+
+                    let region = resolve_bucket_region(bucket, &ClientOptions::default())
+                        .await
+                        .context(ex_error::ObjectStoreSnafu)?;
+
+                    let credentials = if let Some(token) = session_token {
+                        Some(AwsCredentials::Token(token.to_string()))
+                    } else {
+                        Some(AwsCredentials::AccessKey(AwsAccessKeyCredentials {
+                            aws_access_key_id: access_key.to_string(),
+                            aws_secret_access_key: secret_key.to_string(),
+                        }))
+                    };
+
+                    let s3_volume = S3Volume {
+                        region: Some(region),
+                        bucket: Some(bucket.to_string()),
+                        endpoint: stage_params.endpoint.clone(),
+                        credentials,
+                    };
+
+                    let s3 = s3_volume
+                        .get_s3_builder()
+                        .build()
+                        .context(ex_error::ObjectStoreSnafu)?;
+                    Ok(Arc::new(s3))
+                } else {
+                    // Fall through to URL-based object store creation
+                    Ok(
+                        create_object_store_from_url(url.as_str(), stage_params.endpoint)
+                            .await
+                            .context(ex_error::MetastoreSnafu)?,
+                    )
+                }
             }
-        };
-        Ok(object_store)
+            // No stage params or credentials - create from URL
+            _ => create_object_store_from_url(url.as_str(), stage_params.endpoint)
+                .await
+                .context(ex_error::MetastoreSnafu),
+        }
     }
 
     async fn build_listing_table_config(
