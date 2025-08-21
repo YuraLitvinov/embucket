@@ -75,10 +75,12 @@ impl LastDayFunc {
         let date = date.date();
 
         let new_date = match date_part.to_lowercase().as_str() {
-            "day" => date.and_hms_opt(0, 0, 0).context(CantCastToSnafu {
-                v: "native_datetime",
-            })?,
-            "week" => {
+            "day" | "d" | "dd" | "days" | "dayofmonth" => {
+                date.and_hms_opt(0, 0, 0).context(CantCastToSnafu {
+                    v: "native_datetime",
+                })?
+            }
+            "week" | "w" | "wk" | "weekofyear" | "woy" | "wy" => {
                 let week_start = self.week_start();
                 // 0 means legacy Snowflake behavior (ISO-like semantics)
                 let week_start_norm = if week_start == 0 {
@@ -97,7 +99,7 @@ impl LastDayFunc {
                         v: "native_datetime",
                     })?
             }
-            "month" => {
+            "month" | "mm" | "mon" | "mons" | "months" => {
                 let year = date.year();
                 let month = date.month();
 
@@ -120,7 +122,7 @@ impl LastDayFunc {
                     v: "native_datetime",
                 })?
             }
-            "year" => {
+            "year" | "y" | "yy" | "yyy" | "yyyy" | "yr" | "years" => {
                 let year = date.year();
                 NaiveDate::from_ymd_opt(year, 12, 31)
                     .context(CantCastToSnafu {
@@ -239,15 +241,17 @@ mod tests {
             &result
         );
 
-        let sql = "SELECT last_day('2024-05-08T23:39:20.123-07:00'::date,'year')::date AS value;";
+        let sql = "SELECT 
+            last_day('2024-05-08T23:39:20.123-07:00'::date,'year')::date AS v1,
+            last_day('2024-05-08T23:39:20.123-07:00'::date,'y')::date AS v2;";
         let result = ctx.sql(sql).await?.collect().await?;
         assert_batches_eq!(
             &[
-                "+------------+",
-                "| value      |",
-                "+------------+",
-                "| 2024-12-31 |",
-                "+------------+",
+                "+------------+------------+",
+                "| v1         | v2         |",
+                "+------------+------------+",
+                "| 2024-12-31 | 2024-12-31 |",
+                "+------------+------------+",
             ],
             &result
         );
