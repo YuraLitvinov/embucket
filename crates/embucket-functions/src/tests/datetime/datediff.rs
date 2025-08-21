@@ -37,3 +37,24 @@ test_query!(
   AS t(d);",
     snapshot_path = "datediff"
 );
+
+test_query!(
+    different_types,
+    "SELECT
+        DATEDIFF('day',
+            CAST('2024-08-14 15:30:00' AS TIMESTAMP),
+            CAST('2024-08-20' AS DATE)) AS ts_date,
+        DATEDIFF('day',
+            CAST('2024-08-14' AS DATE),
+            CAST('2024-08-20 15:30:00' AS TIMESTAMP)) AS date_ts,
+        DATEDIFF('minute',
+            CAST('00:10:00' AS TIME),
+            CAST('00:15:00' AS TIME)) AS ts_time,
+        DATEDIFF('minute',
+            '1970-01-01 00:10:00',
+            CAST('1970-01-01 00:15:00' AS TIMESTAMP)) AS time_ts,
+        DATEDIFF('minute',
+            CAST('1970-01-01' AS DATE),
+            CAST('1970-02-01 00:15:00' AS TIMESTAMP)) AS date_time",
+    snapshot_path = "datediff"
+);
