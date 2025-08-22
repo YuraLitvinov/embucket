@@ -2126,7 +2126,6 @@ impl UserQuery {
         ScalarValue::try_from_array(column, 0).context(ex_error::DataFusionSnafu)
     }
 
-    #[allow(clippy::unwrap_used)]
     async fn table_references_for_statement(
         &self,
         statement: &DFStatement,
@@ -2158,14 +2157,15 @@ impl UserQuery {
         &self,
         table_ref: impl Into<TableReference>,
     ) -> ResolvedTableReference {
-        table_ref
+        let resolved = table_ref
             .into()
-            .resolve(&self.current_database(), &self.current_schema())
+            .resolve(&self.current_database(), &self.current_schema());
+        normalize_resolved_ref(&resolved)
     }
 
     #[must_use]
     pub fn resolve_schema_ref(&self, schema: SchemaReference) -> ResolvedTableReference {
-        match schema {
+        let schema_ref = match schema {
             SchemaReference::Bare { schema } => ResolvedTableReference {
                 catalog: Arc::from(self.current_database()),
                 schema,
@@ -2176,7 +2176,8 @@ impl UserQuery {
                 schema,
                 table: Arc::from(""),
             },
-        }
+        };
+        normalize_resolved_ref(&schema_ref)
     }
 
     pub fn schema_for_ref(
@@ -3270,5 +3271,12 @@ fn create_file_format(
         }
     } else {
         Ok(None)
+    }
+}
+fn normalize_resolved_ref(table_ref: &ResolvedTableReference) -> ResolvedTableReference {
+    ResolvedTableReference {
+        catalog: Arc::from(table_ref.catalog.to_ascii_lowercase()),
+        schema: Arc::from(table_ref.schema.to_ascii_lowercase()),
+        table: Arc::from(table_ref.table.to_ascii_lowercase()),
     }
 }
