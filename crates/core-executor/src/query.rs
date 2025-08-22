@@ -47,8 +47,8 @@ use datafusion::sql::parser::{CreateExternalTable, Statement as DFStatement};
 use datafusion::sql::planner::ParserOptions;
 use datafusion::sql::resolve::resolve_table_references;
 use datafusion::sql::sqlparser::ast::{
-    CreateTable as CreateTableStatement, Expr, Ident, ObjectName, Query, SchemaName, Statement,
-    TableFactor,
+    CreateTable as CreateTableStatement, DescribeAlias, Expr, Ident, ObjectName, Query, SchemaName,
+    Statement, TableFactor,
 };
 use datafusion::sql::statement::object_name_to_string;
 use datafusion_common::{
@@ -414,6 +414,13 @@ impl UserQuery {
                 }
                 Statement::Drop { .. } => return Box::pin(self.drop_query(*s)).await,
                 Statement::Merge { .. } => return Box::pin(self.merge_query(*s)).await,
+                Statement::ExplainTable {
+                    describe_alias: DescribeAlias::Describe | DescribeAlias::Desc,
+                    table_name,
+                    ..
+                } => {
+                    return Box::pin(self.describe_table_query(table_name)).await;
+                }
                 _ => {}
             }
         } else if let DFStatement::CreateExternalTable(cetable) = statement {
@@ -1800,6 +1807,24 @@ impl UserQuery {
                 .fail();
             }
         };
+        Box::pin(self.execute_with_custom_plan(&query)).await
+    }
+
+    pub async fn describe_table_query(&self, table_name: ObjectName) -> Result<QueryResult> {
+        let resolved_ident = self.resolve_table_object_name(table_name.0)?;
+        let table_ident = self.resolve_table_ref(&resolved_ident);
+        let query = format!(
+            "SELECT 
+                column_name as name,
+                upper(snowflake_data_type) as type,
+                is_nullable as 'null?'
+            FROM {}.information_schema.columns
+            WHERE table_catalog = '{}' 
+              AND table_schema = '{}' 
+              AND table_name = '{}'
+            ORDER BY ordinal_position",
+            table_ident.catalog, table_ident.catalog, table_ident.schema, table_ident.table
+        );
         Box::pin(self.execute_with_custom_plan(&query)).await
     }
 
