@@ -9,7 +9,7 @@ use axum::response::IntoResponse;
     name = "api_snowflake_rest::layer::require_auth",
     level = "trace",
     skip(state, req, next),
-    fields(request_headers = format!("{:#?}", req.headers()), response_headers),
+    fields(request_headers = format!("{:#?}", req.headers()), response_headers, session_id),
     err,
 )]
 pub async fn require_auth(
@@ -26,7 +26,10 @@ pub async fn require_auth(
         return crate::error::MissingAuthTokenSnafu.fail()?;
     };
 
-    let sessions = state.execution_svc.get_sessions().await; // `get_sessions` returns an RwLock
+    // Record the result as part of the current span.
+    tracing::Span::current().record("session_id", token.as_str());
+
+    let sessions = state.execution_svc.get_sessions(); // `get_sessions` returns an RwLock
 
     let sessions = sessions.read().await;
 
