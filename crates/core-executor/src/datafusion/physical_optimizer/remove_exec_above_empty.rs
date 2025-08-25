@@ -6,12 +6,17 @@ use datafusion::physical_plan::empty::EmptyExec;
 use datafusion::physical_plan::execution_plan::ExecutionPlan;
 use datafusion_common::config::ConfigOptions;
 use datafusion_common::tree_node::{Transformed, TransformedResult, TreeNode};
+use datafusion_physical_plan::aggregates::AggregateExec;
 
 /// A physical optimizer rule that removes any execution plan node
 /// whose all inputs are `EmptyExec`. Since an `EmptyExec` always
 /// returns no rows, operations like `SortExec`, `FilterExec`,
 /// `ProjectionExec`, `JoinExec` (with both sides empty), etc., can be
 /// safely replaced with a single `EmptyExec`.
+///
+/// However, aggregate operations (like `AggregateExec`) are preserved even
+/// when their inputs are empty, because aggregate functions should return
+/// results even on empty tables (e.g., COUNT(*) should return 0).
 ///
 /// This helps avoid unnecessary execution overhead and simplifies the final plan.
 ///
@@ -47,8 +52,9 @@ impl PhysicalOptimizerRule for RemoveExecAboveEmpty {
         _config: &ConfigOptions,
     ) -> DFResult<Arc<dyn ExecutionPlan>> {
         plan.transform_up(|plan| {
-            // Skip EmptyExec itself
-            if plan.as_any().is::<EmptyExec>() {
+            // Skip EmptyExec itself and do not replace aggregate operations with EmptyExec because they should
+            // still return results even on empty tables (e.g., COUNT(*) should return 0)
+            if plan.as_any().is::<EmptyExec>() || contains_aggregates(&plan) {
                 return Ok(Transformed::no(plan));
             }
 
@@ -59,7 +65,6 @@ impl PhysicalOptimizerRule for RemoveExecAboveEmpty {
 
             // Replace the current node with EmptyExec if all inputs are EmptyExec
             let all_empty = inputs.iter().all(|input| input.as_any().is::<EmptyExec>());
-
             if all_empty {
                 return Ok(Transformed::yes(Arc::new(EmptyExec::new(plan.schema()))));
             }
@@ -76,6 +81,17 @@ impl PhysicalOptimizerRule for RemoveExecAboveEmpty {
     fn schema_check(&self) -> bool {
         true
     }
+}
+
+/// Check if the execution plan contains any aggregate operations
+fn contains_aggregates(plan: &Arc<dyn ExecutionPlan>) -> bool {
+    if plan.as_any().is::<AggregateExec>() {
+        return true;
+    }
+
+    plan.children()
+        .iter()
+        .any(|child| contains_aggregates(child))
 }
 
 #[cfg(test)]
