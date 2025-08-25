@@ -10,10 +10,19 @@
 cd test/dbt_integration_tests/dbt-snowplow-web
 ```
 
-2. Run dbt-snowplow-web project
+2. Run dbt-snowplow-web incremental:  1 - is incremental true/false, 2 - rows of sample data to be generated
+```sh
+./incremental.sh false 10000
+```
+Note: It starts it's own Embukcet in docker.
+Also, you can run it over and over again, it stops the container and cleans it before the new run.
+
+3. Old way run dbt-snowplow-web project
 ```sh
 ./run_snowplow_web.sh
 ```
+
+
 
 Note:
 It runs with default user and password 'embucket'. No need to add .env file. 

@@ -1,3 +1,4 @@
+#!/bin/bash
 
 echo ""
 echo "Cloning dbt-snowplow-web repository"
