@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Dict, Any, Callable, List, Optional, Tuple
 
 import pytest
+from dotenv import load_dotenv
+load_dotenv()
 
 
 def _get(key: str, default: Optional[str] = None) -> Optional[str]:
@@ -293,37 +295,107 @@ def _load_dataset_fixture(
 
 
 def compare_result_sets(
-    a: List[Tuple[Any, ...]],
-    b: List[Tuple[Any, ...]],
-    rel_tol: float = 1e-6,
-    abs_tol: float = 1e-9,
+        a: List[Tuple[Any, ...]],
+        b: List[Tuple[Any, ...]],
+        rel_tol: float = 1e-6,
+        abs_tol: float = 1e-9,
+        metrics_recorder=None,
+        query_id=None,
 ) -> Tuple[bool, str]:
     """Compare two result sets with type tolerance and order-insensitive.
 
     Returns (ok, message). On failure, message contains a small diff.
+    If metrics_recorder and query_id are provided, detailed mismatch info is recorded.
     """
+    mismatches = []
+
+    # Check row count
     if len(a) != len(b):
+        mismatch_info = {
+            "type": "row_count_mismatch",
+            "spark_rows": len(a),
+            "embucket_rows": len(b)
+        }
+        if metrics_recorder and query_id:
+            metrics_recorder.add_mismatch(query_id, mismatch_info)
         return False, f"Row count differs: {len(a)} vs {len(b)}"
+
     sa = _sort_rows(a)
     sb = _sort_rows(b)
     import math
 
+    # Check row data
     for i, (ra, rb) in enumerate(zip(sa, sb)):
+        row_mismatches = {}
+
         if len(ra) != len(rb):
-            return False, f"Row {i} length differs: {len(ra)} vs {len(rb)}"
+            mismatch_info = {
+                "type": "row_structure_mismatch",
+                "row_index": i,
+                "spark_columns": len(ra),
+                "embucket_columns": len(rb)
+            }
+            mismatches.append(mismatch_info)
+            if len(mismatches) >= 10:  # Limit number of mismatches collected
+                break
+            continue
+
         for j, (va, vb) in enumerate(zip(ra, rb)):
             if va == vb:
                 continue
+
             # Handle numeric approx
             if _is_number(va) and _is_number(vb):
                 if math.isclose(float(va), float(vb), rel_tol=rel_tol, abs_tol=abs_tol):
                     continue
-                return False, f"Row {i}, col {j} numeric mismatch: {va} vs {vb}"
+                row_mismatches[j] = {
+                    "spark_value": va,
+                    "embucket_value": vb,
+                    "type": "numeric_mismatch"
+                }
+                continue
+
             # Normalize None vs empty string edge cases cautiously
             if va in (None, "") and vb in (None, ""):
                 continue
+
             if str(va) != str(vb):
-                return False, f"Row {i}, col {j} differs: {va} vs {vb}"
+                row_mismatches[j] = {
+                    "spark_value": va,
+                    "embucket_value": vb,
+                    "type": "value_mismatch"
+                }
+
+        if row_mismatches:
+            mismatches.append({
+                "type": "data_mismatch",
+                "row_index": i,
+                "columns": row_mismatches
+            })
+
+            if len(mismatches) >= 10:  # Limit number of mismatches collected
+                break
+
+    if mismatches:
+        if metrics_recorder and query_id:
+            metrics_recorder.add_mismatch(query_id, {
+                "total_mismatches": len(mismatches),
+                "details": mismatches[:10]  # Limit to first 10 for reasonable size
+            })
+
+        # Format first mismatch for error message
+        first = mismatches[0]
+        if first["type"] == "row_structure_mismatch":
+            msg = f"Row {first['row_index']} length differs: {first['spark_columns']} vs {first['embucket_columns']}"
+        elif first["type"] == "data_mismatch":
+            col_idx = next(iter(first["columns"]))
+            col_info = first["columns"][col_idx]
+            msg = f"Row {first['row_index']}, col {col_idx} differs: {col_info['spark_value']} vs {col_info['embucket_value']}"
+        else:
+            msg = f"Data mismatch in {len(mismatches)} rows"
+
+        return False, msg
+
     return True, "OK"
 
 
@@ -460,7 +532,7 @@ def spark_engine(spark) -> SparkEngine:
 
 # NYC Taxi Dataset Fixtures
 @pytest.fixture(scope="session")
-def nyc_taxi(request, test_run_id):
+def nyc_yellow_taxi(request, test_run_id):
     """Parameterized NYC taxi fixture that accepts engine type.
 
     Use with indirect=True parametrization:
@@ -474,6 +546,40 @@ def nyc_taxi(request, test_run_id):
 
     engine = request.getfixturevalue(f"{engine_type}_engine")
     return _load_dataset_fixture("nyc_taxi_yellow", engine, test_run_id, engine_type)
+
+
+@pytest.fixture(scope="session")
+def nyc_green_taxi(request, test_run_id):
+    """Parameterized NYC green taxi fixture that accepts engine type.
+
+    Use with indirect=True parametrization:
+    @pytest.mark.parametrize('nyc_taxi_green', ['spark', 'embucket'], indirect=True)
+    """
+    engine_type = request.param
+    if engine_type not in ["spark", "embucket"]:
+        raise ValueError(
+            f"Unknown engine type: {engine_type}. Use 'spark' or 'embucket'."
+        )
+
+    engine = request.getfixturevalue(f"{engine_type}_engine")
+    return _load_dataset_fixture("nyc_taxi_green", engine, test_run_id, engine_type)
+
+
+@pytest.fixture(scope="session")
+def fhv(request, test_run_id):
+    """Parameterized NYC green taxi fixture that accepts engine type.
+
+    Use with indirect=True parametrization:
+    @pytest.mark.parametrize('nyc_taxi_green', ['spark', 'embucket'], indirect=True)
+    """
+    engine_type = request.param
+    if engine_type not in ["spark", "embucket"]:
+        raise ValueError(
+            f"Unknown engine type: {engine_type}. Use 'spark' or 'embucket'."
+        )
+
+    engine = request.getfixturevalue(f"{engine_type}_engine")
+    return _load_dataset_fixture("fhv", engine, test_run_id, engine_type)
 
 
 # TPC-H Dataset Fixtures
@@ -532,3 +638,117 @@ def tpch_full(request, test_run_id):
         )
 
     return loaded_tables
+
+
+@pytest.fixture(scope="session")
+def tpcds_full(request, test_run_id):
+    """Parameterized TPC-DS complete dataset fixture that accepts engine type.
+
+    Loads all TPC-DS tables with the specified engine and returns as dict.
+    Use with indirect=True parametrization:
+    @pytest.mark.parametrize('tpcds_full', ['spark', 'embucket'], indirect=True)
+    """
+    engine_type = request.param
+    tables = [
+        "call_center", "catalog_page", "catalog_returns", "catalog_sales",
+        "customer", "customer_address", "customer_demographics", "date_dim",
+        "household_demographics", "income_band", "inventory", "item",
+        "promotion", "reason", "ship_mode", "store", "store_returns",
+        "store_sales", "time_dim", "warehouse", "web_page", "web_returns",
+        "web_sales", "web_site"
+    ]
+
+    if engine_type not in ["spark", "embucket"]:
+        raise ValueError(
+            f"Unknown engine type: {engine_type}. Use 'spark' or 'embucket'."
+        )
+
+    engine = request.getfixturevalue(f"{engine_type}_engine")
+
+    # Load all tables with the specified engine
+    loaded_tables = {}
+    for table in tables:
+        dataset_name = f"tpcds_{table}"
+        loaded_tables[table] = _load_dataset_fixture(
+            dataset_name, engine, test_run_id, engine_type
+        )
+
+    return loaded_tables
+
+
+@pytest.fixture(scope="session")
+def clickbench_hits(request, test_run_id):
+    """Parameterized Clickbench hits fixture that accepts engine type.
+
+    Use with indirect=True parametrization:
+    @pytest.mark.parametrize('clickbench_hits', ['spark', 'embucket'], indirect=True)
+    """
+    engine_type = request.param
+    if engine_type not in ["spark", "embucket"]:
+        raise ValueError(
+            f"Unknown engine type: {engine_type}. Use 'spark' or 'embucket'."
+        )
+
+    engine = request.getfixturevalue(f"{engine_type}_engine")
+    return _load_dataset_fixture("clickbench_hits", engine, test_run_id, engine_type)
+
+
+# ---- Simple perf metrics plumbing ------------------------------------------
+from pathlib import Path
+from datetime import datetime
+import csv, os, socket, platform, json, time
+
+
+class MetricsRecorder:
+    FIELDS = [
+        "test_run_id", "dataset",
+        "query_id", "rows_spark", "rows_embucket",
+        "time_spark_ms", "time_embucket_ms", "speedup_vs_spark",
+        "passed", "nodeid", "created_at"
+    ]
+
+    def __init__(self, outfile: Path, test_run_id: str):
+        self.outfile = Path(outfile)
+        self.test_run_id = test_run_id
+        self.rows = []
+        self.mismatches = {}  # Store detailed mismatches by query_id
+        self.outfile.parent.mkdir(parents=True, exist_ok=True)
+
+    def add(self, **kw):
+        row = {k: kw.get(k) for k in self.FIELDS}
+        row["test_run_id"] = self.test_run_id
+        row["created_at"] = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+        self.rows.append(row)
+
+    def add_mismatch(self, query_id, mismatch_details):
+        """Record detailed mismatch information for a query."""
+        if query_id not in self.mismatches:
+            self.mismatches[query_id] = []
+        self.mismatches[query_id].append(mismatch_details)
+
+    def flush(self):
+        # Write metrics CSV
+        write_header = not self.outfile.exists()
+        with self.outfile.open("a", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=self.FIELDS)
+            if write_header:
+                w.writeheader()
+            for r in self.rows:
+                w.writerow(r)
+
+        # Write mismatches JSON if there are any
+        if self.mismatches:
+            mismatch_file = self.outfile.with_name(f"mismatches_{self.test_run_id}.json")
+            with mismatch_file.open("w") as f:
+                json.dump(self.mismatches, f, indent=2, default=str)
+
+        self.rows.clear()
+
+@pytest.fixture(scope="session")
+def metrics_recorder(test_run_id) -> MetricsRecorder:
+    # You can override paths via env if you like
+    artifacts_dir = Path(os.getenv("INTEGRATION_ARTIFACTS_DIR", "artifacts"))
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    rec = MetricsRecorder(artifacts_dir / f"metrics_{test_run_id}.csv", test_run_id)
+    yield rec
+    rec.flush()
