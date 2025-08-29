@@ -2910,7 +2910,7 @@ dependencies = [
 [[package]]
 name = "datafusion_iceberg"
 version = "0.8.0"
-source = "git+https://github.com/Embucket/iceberg-rust.git?rev=17d126f4278a43edefcbef852dfd3eb4a97d62c6#17d126f4278a43edefcbef852dfd3eb4a97d62c6"
+source = "git+https://github.com/Embucket/iceberg-rust.git?rev=617ab94b6f81d07bb76f060a381ee855ea6ec3ce#617ab94b6f81d07bb76f060a381ee855ea6ec3ce"
 dependencies = [
  "async-trait",
  "chrono",
@@ -2921,12 +2921,14 @@ dependencies = [
  "futures",
  "iceberg-rust",
  "itertools 0.14.0",
+ "lru 0.16.0",
  "object_store",
  "pin-project-lite",
  "regex",
  "serde_json",
  "thiserror 2.0.14",
  "tokio",
+ "tracing",
  "url",
  "uuid",
 ]
@@ -4509,7 +4511,7 @@ dependencies = [
 [[package]]
 name = "iceberg-rest-catalog"
 version = "0.8.0"
-source = "git+https://github.com/Embucket/iceberg-rust.git?rev=17d126f4278a43edefcbef852dfd3eb4a97d62c6#17d126f4278a43edefcbef852dfd3eb4a97d62c6"
+source = "git+https://github.com/Embucket/iceberg-rust.git?rev=617ab94b6f81d07bb76f060a381ee855ea6ec3ce#617ab94b6f81d07bb76f060a381ee855ea6ec3ce"
 dependencies = [
  "async-trait",
  "aws-sigv4 0.3.1",
@@ -4534,7 +4536,7 @@ dependencies = [
 [[package]]
 name = "iceberg-rust"
 version = "0.8.0"
-source = "git+https://github.com/Embucket/iceberg-rust.git?rev=17d126f4278a43edefcbef852dfd3eb4a97d62c6#17d126f4278a43edefcbef852dfd3eb4a97d62c6"
+source = "git+https://github.com/Embucket/iceberg-rust.git?rev=617ab94b6f81d07bb76f060a381ee855ea6ec3ce#617ab94b6f81d07bb76f060a381ee855ea6ec3ce"
 dependencies = [
  "apache-avro",
  "arrow",
@@ -4567,7 +4569,7 @@ dependencies = [
 [[package]]
 name = "iceberg-rust-spec"
 version = "0.8.0"
-source = "git+https://github.com/Embucket/iceberg-rust.git?rev=17d126f4278a43edefcbef852dfd3eb4a97d62c6#17d126f4278a43edefcbef852dfd3eb4a97d62c6"
+source = "git+https://github.com/Embucket/iceberg-rust.git?rev=617ab94b6f81d07bb76f060a381ee855ea6ec3ce#617ab94b6f81d07bb76f060a381ee855ea6ec3ce"
 dependencies = [
  "apache-avro",
  "arrow-schema 55.2.0",
@@ -4592,7 +4594,7 @@ dependencies = [
 [[package]]
 name = "iceberg-s3tables-catalog"
 version = "0.8.0"
-source = "git+https://github.com/Embucket/iceberg-rust.git?rev=17d126f4278a43edefcbef852dfd3eb4a97d62c6#17d126f4278a43edefcbef852dfd3eb4a97d62c6"
+source = "git+https://github.com/Embucket/iceberg-rust.git?rev=617ab94b6f81d07bb76f060a381ee855ea6ec3ce#617ab94b6f81d07bb76f060a381ee855ea6ec3ce"
 dependencies = [
  "async-trait",
  "aws-config",
