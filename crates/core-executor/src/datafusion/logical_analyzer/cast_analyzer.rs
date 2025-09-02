@@ -9,6 +9,7 @@ use datafusion_common::tree_node::{Transformed, TransformedResult, TreeNode};
 use datafusion_expr::expr::ScalarFunction;
 use datafusion_expr::expr_rewriter::NamePreserver;
 use datafusion_expr::{Cast, Expr, ReturnTypeArgs, ScalarUDF};
+use embucket_functions::conversion::to_array::ToArrayFunc;
 use embucket_functions::conversion::to_date::ToDateFunc;
 use embucket_functions::conversion::to_timestamp::ToTimestampFunc;
 use embucket_functions::session_params::SessionParams;
@@ -62,6 +63,16 @@ impl CastAnalyzer {
                                 return Ok(ts_cast);
                             }
                         }
+                        DataType::List(_)
+                        | DataType::ListView(_)
+                        | DataType::LargeList(_)
+                        | DataType::LargeListView(_)
+                        | DataType::FixedSizeList(_, _) => {
+                            return Ok(Transformed::yes(Expr::ScalarFunction(ScalarFunction {
+                                func: Arc::new(ScalarUDF::from(ToArrayFunc::new())),
+                                args: vec![cast.expr.deref().clone()],
+                            })));
+                        }
                         _ => return Ok(Transformed::no(e)),
                     }
                 }
@@ -112,7 +123,8 @@ impl CastAnalyzer {
 impl AnalyzerRule for CastAnalyzer {
     fn analyze(&self, plan: LogicalPlan, _: &ConfigOptions) -> DFResult<LogicalPlan> {
         plan.transform_up_with_subqueries(|plan| self.analyze_internal(&plan))
-            .data()
+            .data()?
+            .recompute_schema()
     }
 
     fn name(&self) -> &'static str {
