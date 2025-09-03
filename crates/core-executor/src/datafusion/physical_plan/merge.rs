@@ -726,8 +726,49 @@ fn schema_projection(schema: &Schema) -> Vec<(Arc<dyn PhysicalExpr>, String)> {
 #[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used)]
+    use datafusion::arrow::array::{GenericStringBuilder, Int32Array};
+    use datafusion::arrow::compute;
+    use datafusion::arrow::datatypes::{DataType, Field};
+
     use super::*;
     use std::sync::Arc;
+
+    macro_rules! test_source_exist_filter_stream {
+        ($test_name:ident, $input_slice:expr, $expected_sum:expr) => {
+            paste::paste! {
+                #[tokio::test]
+                async fn [<test_source_exist_filter_stream_ $test_name>]() {
+                    use datafusion::arrow::datatypes::{DataType, Field};
+                    use futures::stream;
+
+                    let schema = Arc::new(Schema::new(vec![
+                        Field::new(SOURCE_EXISTS_COLUMN, DataType::Boolean, true),
+                        Field::new(DATA_FILE_PATH_COLUMN, DataType::Utf8, true),
+                        Field::new(MANIFEST_FILE_PATH_COLUMN, DataType::Utf8, true),
+                        Field::new("data", DataType::Int32, false),
+                    ]));
+
+                    let input_stream = stream::iter(build_input_stream($input_slice));
+
+                    let stream = Box::pin(RecordBatchStreamAdapter::new(schema, input_stream));
+
+                    let matching_files = Arc::default();
+
+                    let mut filter_stream = MergeCOWFilterStream::new(stream, matching_files);
+
+                    let mut sum = 0;
+                    while let Some(result) = StreamExt::next(&mut filter_stream).await {
+                        let batch = result.unwrap();
+                        let data = batch.column(3);
+
+                        sum += compute::sum(&downcast_array::<Int32Array>(&data)).unwrap();
+                    }
+
+                    assert_eq!(sum, $expected_sum);
+                }
+            }
+        };
+    }
 
     #[test]
     fn test_unique_values_with_duplicates() {
@@ -767,8 +808,33 @@ mod tests {
         assert_eq!(result, expected);
     }
 
+    #[test]
+    fn test_unique_files_and_manifests_with_duplicates() {
+        let files = Arc::new(StringArray::from(vec![
+            "file1", "file2", "file3", "file4", "file5",
+        ]));
+        let manifests = Arc::new(StringArray::from(vec![
+            "manifest1",
+            "manifest1",
+            "manifest2",
+            "manifest2",
+            "manifest3",
+        ]));
+
+        let result = unique_files_and_manifests(files.as_ref(), manifests.as_ref()).unwrap();
+
+        let expected = HashMap::from_iter([
+            ("file1".to_string(), "manifest1".to_string()),
+            ("file2".to_string(), "manifest1".to_string()),
+            ("file3".to_string(), "manifest2".to_string()),
+            ("file4".to_string(), "manifest2".to_string()),
+            ("file5".to_string(), "manifest3".to_string()),
+        ]);
+        assert_eq!(result, expected);
+    }
+
     #[tokio::test]
-    async fn test_source_exist_filter_stream() {
+    async fn test_source_exist_filter_stream_simple() {
         use datafusion::arrow::datatypes::{DataType, Field};
         use futures::stream;
 
@@ -842,28 +908,165 @@ mod tests {
         assert!(total_rows == 9);
     }
 
-    #[test]
-    fn test_unique_files_and_manifests_with_duplicates() {
-        let files = Arc::new(StringArray::from(vec![
-            "file1", "file2", "file3", "file4", "file5",
-        ]));
-        let manifests = Arc::new(StringArray::from(vec![
-            "manifest1",
-            "manifest1",
-            "manifest2",
-            "manifest2",
-            "manifest3",
-        ]));
+    /// Generates test record batches from a sequence of scenario identifiers.
+    ///
+    /// Each tuple in the sequence contains (index, scenario_type) where scenario_type maps to:
+    /// 1. Target-only data, 2. Source-only data, 3. Target+Source, 4. Matching data,
+    /// 5. Target+Matching, 6. Source+Matching, 7. Target+Source+Matching
+    fn build_input_stream(
+        sequence: &[(usize, usize)],
+    ) -> Vec<Result<RecordBatch, DataFusionError>> {
+        sequence
+            .iter()
+            .map(|(n, i)| {
+                let n: i32 = (*n).try_into().unwrap();
+                match i {
+                    1 => Ok(build_record_batch(&[generate_target(n)])),
+                    2 => Ok(build_record_batch(&[generate_source(n)])),
+                    3 => Ok(build_record_batch(&[
+                        generate_target(n),
+                        generate_source(n),
+                    ])),
+                    4 => Ok(build_record_batch(&[generate_matching(n)])),
+                    5 => Ok(build_record_batch(&[
+                        generate_target(n),
+                        generate_matching(n),
+                    ])),
+                    6 => Ok(build_record_batch(&[
+                        generate_source(n),
+                        generate_matching(n),
+                    ])),
+                    7 => Ok(build_record_batch(&[
+                        generate_source(n),
+                        generate_target(n),
+                        generate_matching(n),
+                    ])),
 
-        let result = unique_files_and_manifests(files.as_ref(), manifests.as_ref()).unwrap();
-
-        let expected = HashMap::from_iter([
-            ("file1".to_string(), "manifest1".to_string()),
-            ("file2".to_string(), "manifest1".to_string()),
-            ("file3".to_string(), "manifest2".to_string()),
-            ("file4".to_string(), "manifest2".to_string()),
-            ("file5".to_string(), "manifest3".to_string()),
-        ]);
-        assert_eq!(result, expected);
+                    _ => panic!(),
+                }
+            })
+            .collect()
     }
+
+    /// Builds a test record batch from a sequence of input data.
+    #[allow(clippy::type_complexity)]
+    fn build_record_batch(
+        input: &[(
+            Vec<bool>,
+            Vec<Option<String>>,
+            Vec<Option<String>>,
+            Vec<i32>,
+        )],
+    ) -> RecordBatch {
+        let schema = Arc::new(Schema::new(vec![
+            Field::new(SOURCE_EXISTS_COLUMN, DataType::Boolean, true),
+            Field::new(DATA_FILE_PATH_COLUMN, DataType::Utf8, true),
+            Field::new(MANIFEST_FILE_PATH_COLUMN, DataType::Utf8, true),
+            Field::new("data", DataType::Int32, false),
+        ]));
+
+        let mut b_builder = BooleanArray::builder(8);
+        let mut df_builder = GenericStringBuilder::<i32>::new();
+        let mut mf_builder = GenericStringBuilder::<i32>::new();
+        let mut d_builder = Int32Array::builder(8);
+        for (b, df, mf, d) in input {
+            b_builder.append_slice(b);
+            df_builder.append_array(&StringArray::from(df.clone()));
+            mf_builder.append_array(&StringArray::from(mf.clone()));
+            d_builder.append_slice(d);
+        }
+        RecordBatch::try_new(
+            schema,
+            vec![
+                Arc::new(b_builder.finish()),
+                Arc::new(df_builder.finish()),
+                Arc::new(mf_builder.finish()),
+                Arc::new(d_builder.finish()),
+            ],
+        )
+        .expect("Failed to build record batch")
+    }
+
+    // Creates test data for the target table where __source_exists is NULL ==> NOT MATCHED
+    #[allow(clippy::type_complexity)]
+    fn generate_target(
+        i: i32,
+    ) -> (
+        Vec<bool>,
+        Vec<Option<String>>,
+        Vec<Option<String>>,
+        Vec<i32>,
+    ) {
+        (
+            vec![false, false, false, false],
+            vec![
+                Some(format!("file${i}")),
+                Some(format!("file${i}")),
+                Some(format!("file${i}")),
+                Some(format!("file${i}")),
+            ],
+            vec![
+                Some(format!("manifest${i}")),
+                Some(format!("manifest${i}")),
+                Some(format!("manifest${i}")),
+                Some(format!("manifest${i}")),
+            ],
+            vec![i * 4 + 1, i * 4 + 2, i * 4 + 3, i * 4 + 4],
+        )
+    }
+
+    // Creates test data for the source table where __data_file_path & __manifest_file_path are
+    // NULL ==> NOT MATCHED
+    #[allow(clippy::type_complexity)]
+    fn generate_source(
+        i: i32,
+    ) -> (
+        Vec<bool>,
+        Vec<Option<String>>,
+        Vec<Option<String>>,
+        Vec<i32>,
+    ) {
+        (
+            vec![true, true, true, true],
+            vec![None, None, None, None],
+            vec![None, None, None, None],
+            vec![i * 4 + 1, i * 4 + 2, i * 4 + 3, i * 4 + 4],
+        )
+    }
+
+    // Creates MATCHED test data for target and source table
+    #[allow(clippy::type_complexity)]
+    fn generate_matching(
+        i: i32,
+    ) -> (
+        Vec<bool>,
+        Vec<Option<String>>,
+        Vec<Option<String>>,
+        Vec<i32>,
+    ) {
+        (
+            vec![true, true, true, true],
+            vec![
+                Some(format!("file${i}")),
+                Some(format!("file${i}")),
+                Some(format!("file${i}")),
+                Some(format!("file${i}")),
+            ],
+            vec![
+                Some(format!("manifest${i}")),
+                Some(format!("manifest${i}")),
+                Some(format!("manifest${i}")),
+                Some(format!("manifest${i}")),
+            ],
+            vec![i * 4 + 1, i * 4 + 2, i * 4 + 3, i * 4 + 4],
+        )
+    }
+
+    test_source_exist_filter_stream!(single_target, &[(0, 1)], 0);
+    test_source_exist_filter_stream!(single_source, &[(0, 2)], 10);
+    test_source_exist_filter_stream!(single_matching, &[(0, 4)], 10);
+    test_source_exist_filter_stream!(single_target_source, &[(0, 3)], 20);
+    test_source_exist_filter_stream!(single_target_matching, &[(0, 5)], 20);
+    test_source_exist_filter_stream!(single_source_matching, &[(0, 6)], 20);
+    test_source_exist_filter_stream!(single_target_source_matching, &[(0, 7)], 30);
 }
