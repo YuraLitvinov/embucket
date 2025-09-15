@@ -28,6 +28,21 @@ variable "environment" {
   default     = "benchmark"
 }
 
+# PowerUser workaround: Use existing AWS user credentials
+variable "benchmark_s3_user_key_id" {
+  description = "AWS Access Key ID for existing user with S3 access (PowerUser workaround)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
+variable "benchmark_s3_user_access_key" {
+  description = "AWS Secret Access Key for existing user with S3 access (PowerUser workaround)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}
+
 variable "private_key_path" {
   description = "Path to the private key file for SSH access"
   type        = string
