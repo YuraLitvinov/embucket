@@ -373,6 +373,7 @@ fn setup_tracing(opts: &cli::CliOpts) -> SdkTracerProvider {
     clippy::cognitive_complexity
 )]
 async fn shutdown_signal(db: Arc<Db>) {
+    //
     let ctrl_c = async {
         signal::ctrl_c()
             .await
@@ -410,6 +411,7 @@ async fn shutdown_signal(db: Arc<Db>) {
 pub struct ApiDoc;
 
 fn load_openapi_spec() -> Option<openapi::OpenApi> {
+    //
     let openapi_yaml_content = fs::read_to_string("rest-catalog-open-api.yaml").ok()?;
     let mut original_spec = serde_yaml::from_str::<openapi::OpenApi>(&openapi_yaml_content).ok()?;
     // Dropping all paths from the original spec
@@ -425,6 +427,7 @@ fn load_openapi_spec() -> Option<openapi::OpenApi> {
 /// Only traces the errors, doesn't panic.
 #[allow(clippy::cognitive_complexity)]
 async fn bootstrap(metastore: Arc<dyn Metastore>, no_bootstrap: bool) {
+    //
     if no_bootstrap {
         return;
     }
