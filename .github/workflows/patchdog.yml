@@ -3,13 +3,6 @@ name: Patchdog
 on:
   issue_comment:
     types: [created]
-  pull_request_review_comment:
-    types: [created]
-  issues:
-    types: [opened, assigned]
-  pull_request_review:
-    types: [submitted]
-  pull_request: 
 
 env:
   CARGO_TERM_COLOR: always
@@ -17,12 +10,7 @@ env:
 jobs:
   run_patchdog:
     if: |
-      github.event_name == 'pull_request' &&
-      (
-      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@patchdog')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@patchdog'))
-      ) 
-
+      github.event.issue.pull_request != '' && contains(github.event.comment.body, '@patchdog')
 
     runs-on: ubuntu-latest
     permissions: 
@@ -31,7 +19,7 @@ jobs:
 
     steps:
       - name: Patchdog
-        uses: YuraLitvinov/patchdog@v1.2.50
+        uses: YuraLitvinov/patchdog@v1.2.62
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           api_key_gemini: ${{ secrets.API_KEY_GEMINI }}
