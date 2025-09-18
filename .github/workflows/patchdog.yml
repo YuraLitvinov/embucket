@@ -17,10 +17,12 @@ env:
 jobs:
   run_patchdog:
     if: |
-      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@patchdog')) ||
+      github.event_name == 'pull_request' &&
+      (
       (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@patchdog')) ||
-      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@patchdog')) ||
-      (github.event_name == 'issues' && contains(github.event.issue.body, '@patchdog'))
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@patchdog'))
+      ) 
+
 
     runs-on: ubuntu-latest
     permissions: 
