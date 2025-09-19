@@ -285,6 +285,15 @@ async fn main() {
         .expect("TracerProvider should shutdown successfully");
 }
 
+/// Configures and initializes the application's tracing and logging infrastructure based on the provided CLI options.
+///
+/// It sets up an OpenTelemetry OTLP exporter, creates a `SdkTracerProvider` using either a `BatchSpanProcessor` or `BatchSpanProcessorAsyncRuntime`, and configures `tracing-subscriber` to send telemetry to OpenTelemetry and format logs as JSON. Log levels and target filters are dynamically applied from `cli::CliOpts` and the `RUST_LOG` environment variable.
+///
+/// # Arguments
+/// * `opts` - A reference to `cli::CliOpts` containing configuration for tracing and logging.
+///
+/// # Returns
+/// Returns an `SdkTracerProvider` instance, which is the configured OpenTelemetry tracer provider.
 #[allow(clippy::expect_used)]
 fn setup_tracing(opts: &cli::CliOpts) -> SdkTracerProvider {
     //
@@ -363,6 +372,15 @@ fn setup_tracing(opts: &cli::CliOpts) -> SdkTracerProvider {
     tracing_provider
 }
 
+/// Asynchronously waits for a shutdown signal (Ctrl+C or SIGTERM) to initiate a graceful termination of the service.
+///
+/// Upon receiving either signal, it ensures the database connection (`db`) is properly closed and logs a warning indicating the start of the graceful shutdown process. This function is critical for clean service termination in response to system signals.
+///
+/// # Arguments
+/// * `db` - An `Arc` to the `Db` instance that needs to be closed during shutdown.
+///
+/// # Returns
+/// This function does not return a value. It primarily manages the application's shutdown flow.
 /// This func will wait for a signal to shutdown the service.
 /// It will wait for either a Ctrl+C signal or a SIGTERM signal.
 ///
@@ -419,6 +437,16 @@ fn load_openapi_spec() -> Option<openapi::OpenApi> {
     Some(original_spec)
 }
 
+/// Bootstraps the service by creating default foundational metadata objects if the `no_bootstrap` flag is not set.
+///
+/// It asynchronously attempts to create a default in-memory volume (`DEFAULT_CATALOG`), a database within that volume, and a `public` schema within that database. Existing objects are gracefully handled without error, while other `MetastoreError` types are logged as errors.
+///
+/// # Arguments
+/// * `metastore` - An `Arc` to a `Metastore` trait object, providing an interface for managing metadata.
+/// * `no_bootstrap` - A boolean flag indicating whether the bootstrapping process should be skipped.
+///
+/// # Returns
+/// This function does not return a value. It performs side effects by modifying the metastore.
 ///This function bootstraps the service if no flag is present (`--no-bootstrap`) with:
 /// 1. Creation of a default in-memory volume named `embucket`
 /// 2. Creation of a default database `embucket` in the volume `embucket`
