@@ -83,6 +83,24 @@ where
     Ok(JsonValue::Array(values))
 }
 
+pub fn shim<T>(array: ArrayRef) -> Result<JsonValue, ArrowError>
+where
+    T: datafusion::arrow::datatypes::ArrowPrimitiveType,
+    T::Native: Into<u64>,
+{
+    let array = array.as_primitive::<T>();
+    let mut values = Vec::with_capacity(array.len());
+
+    for i in 0..array.len() {
+        values.push(if array.is_null(i) {
+            JsonValue::Null
+        } else {
+            JsonValue::Number(Number::from(array.value(i).into()))
+        });
+    }
+    Ok(JsonValue::Array(values))
+}
+
 /// Encodes a Float16 Arrow array into a JSON array
 pub fn encode_float16_array(array: ArrayRef) -> Result<JsonValue, ArrowError> {
     let array = array.as_primitive::<Float16Type>();

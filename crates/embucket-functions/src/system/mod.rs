@@ -14,3 +14,15 @@ pub fn register_udfs(registry: &mut dyn FunctionRegistry) -> Result<()> {
     registry.register_udf(sleep::get_udf())?;
     Ok(())
 }
+
+
+pub fn shim() {
+ 
+
+
+
+    
+
+
+    
+}

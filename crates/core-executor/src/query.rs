@@ -159,6 +159,18 @@ impl UserQuery {
             _ => DataFusionError::NotImplemented(e.to_string()),
         })?;
         Ok(statement)
+
+    }
+
+    pub fn shim() {
+ 
+
+
+
+    
+
+
+    
     }
 
     pub async fn plan(&self) -> std::result::Result<LogicalPlan, DataFusionError> {
@@ -180,6 +192,7 @@ impl UserQuery {
             .clone()
             .or_else(|| self.session.get_session_variable("schema"))
             .unwrap_or_else(|| "public".to_string())
+
     }
 
     #[instrument(
@@ -239,6 +252,7 @@ impl UserQuery {
                 .context(ex_error::CreateDatabaseSnafu)?;
         }
         Ok(())
+
     }
 
     fn session_context_expr_rewriter(&self) -> SessionContextExprRewriter {
@@ -285,6 +299,7 @@ impl UserQuery {
             visit_all(value);
         }
         Ok(())
+
     }
 
     #[allow(clippy::too_many_lines)]
@@ -439,6 +454,9 @@ impl UserQuery {
         } else if let DFStatement::CreateExternalTable(cetable) = statement {
             return Box::pin(self.create_external_table_query(cetable)).await;
         }
+
+
+    
         self.execute_sql(&self.query).await
     }
 
@@ -455,6 +473,8 @@ impl UserQuery {
                 }
                 .build()
             })
+
+
     }
 
     #[instrument(name = "UserQuery::get_iceberg_mirror", level = "trace")]
@@ -516,6 +536,8 @@ impl UserQuery {
                 }
                 .fail(),
             )
+
+
         }
     }
 
@@ -562,6 +584,9 @@ impl UserQuery {
         }
         self.session.set_session_variable(true, session_params)?;
         self.status_response()
+
+
+        
     }
 
     #[instrument(name = "UserQuery::alter_table", level = "trace", skip(self), err)]
