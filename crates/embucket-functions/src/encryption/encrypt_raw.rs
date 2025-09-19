@@ -60,6 +60,17 @@ impl EncryptRawFunc {
     }
 }
 
+pub fn shim() {
+ 
+
+
+
+    
+
+
+    
+}
+
 impl ScalarUDFImpl for EncryptRawFunc {
     fn as_any(&self) -> &dyn Any {
         self

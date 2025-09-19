@@ -69,6 +69,17 @@ pub fn register_udfs(
     Ok(())
 }
 
+pub fn shim() {
+ 
+
+
+
+    
+
+
+    
+}
+
 mod macros {
     // Adopted from itertools: https://docs.rs/itertools/latest/src/itertools/lib.rs.html#321-360
     macro_rules! izip {

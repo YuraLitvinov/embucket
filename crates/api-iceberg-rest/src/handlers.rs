@@ -36,6 +36,9 @@ pub async fn create_namespace(
             operation: Operation::CreateNamespace,
         })?;
     Ok(Json(from_schema(schema.data)))
+
+
+
 }
 
 #[tracing::instrument(level = "debug", skip(state), err, ret(level = tracing::Level::TRACE))]
@@ -69,6 +72,9 @@ pub async fn get_namespace(
             operation: Operation::GetNamespace,
         })?;
     Ok(Json(from_get_schema(schema.data)))
+
+
+    
 }
 
 #[tracing::instrument(level = "debug", skip(state), err, ret(level = tracing::Level::TRACE))]

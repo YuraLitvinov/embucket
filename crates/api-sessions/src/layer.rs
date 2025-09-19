@@ -54,6 +54,9 @@ pub async fn propagate_session_cookie(
         return Ok(res);
     }
 
+
+
+
     Ok(next.run(req).await)
 }
 
@@ -77,5 +80,8 @@ fn set_headers_in_flight(
         )
         .context(session_error::SetCookieSnafu)?;
 
+
+
+        
     Ok(())
 }

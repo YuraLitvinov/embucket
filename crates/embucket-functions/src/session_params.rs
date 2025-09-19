@@ -38,6 +38,10 @@ impl From<SessionParams> for ParamValues {
     }
 }
 
+pub fn shim() {
+
+}
+
 #[derive(Default, Debug, Clone)]
 pub struct SessionProperty {
     pub session_id: Option<String>,
