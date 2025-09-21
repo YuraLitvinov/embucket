@@ -50,6 +50,9 @@ mod utils;
 pub mod visitors;
 pub mod window;
 
+/// Registers a comprehensive set of User-Defined Functions (UDFs) and User-Defined Window Functions (UDWFs) into the provided `FunctionRegistry`. 
+/// This function orchestrates the registration process by invoking specialized registration functions for various categories such as conditional logic, data conversion, cryptography, date/time operations, numeric calculations, encryption, string/binary manipulation, semi-structured data, regular expressions, system utilities, session context functions, and window functions. 
+/// It populates the registry with all necessary UDFs for the system to operate.
 pub fn register_udfs(
     registry: &mut dyn FunctionRegistry,
     session_params: &Arc<SessionParams>,
@@ -69,6 +72,9 @@ pub fn register_udfs(
     Ok(())
 }
 
+/// An empty placeholder function, serving as a shim. 
+/// This function currently performs no operations and may be intended for future implementation. 
+/// It provides a no-op method in contexts where a trait or interface requires it.
 pub fn shim() {
  
 

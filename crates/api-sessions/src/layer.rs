@@ -11,6 +11,9 @@ use http::{HeaderMap, HeaderName};
 use snafu::ResultExt;
 use tower_sessions::cookie::{Cookie, SameSite};
 
+/// Manages and propagates the user session cookie, `DFSessionId`, across requests. 
+/// This asynchronous middleware function checks for an existing session ID in the request headers using `extract_token_from_cookie`; if it's expired or missing, a new one is generated and securely added to the response via `set_headers_in_flight`. 
+/// It ensures that a valid session ID is available for subsequent processing by inserting it into the request extensions.
 #[allow(clippy::unwrap_used, clippy::cognitive_complexity)]
 pub async fn propagate_session_cookie(
     State(state): State<SessionStore>,
@@ -60,6 +63,9 @@ pub async fn propagate_session_cookie(
     Ok(next.run(req).await)
 }
 
+/// Sets a new cookie header in the provided `HeaderMap` for an in-flight HTTP response. 
+/// This function constructs a secure, HTTP-only cookie with a given name and token, configured for strict same-site policy and a root path. 
+/// It attempts to insert this cookie into the response headers, returning `Ok(())` on successful insertion or an error if header parsing or insertion fails.
 fn set_headers_in_flight(
     headers: &mut HeaderMap,
     header_name: HeaderName,
