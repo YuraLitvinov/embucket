@@ -148,6 +148,9 @@ impl UserQuery {
         }
     }
 
+/// Parses the raw SQL query string into a DataFusion `DFStatement` and applies post-processing validations. 
+/// This function utilizes the session's configured SQL parser dialect to interpret the raw query, followed by a series of rewrite rules and checks using `postprocess_query_statement_with_validation` to ensure the statement is well-formed and compatible with the execution engine. 
+/// It returns the parsed `DFStatement` or a `DataFusionError` if parsing or validation fails.
     pub fn parse_query(&self) -> std::result::Result<DFStatement, DataFusionError> {
         let state = self.session.ctx.state();
         let dialect = state.config().options().sql_parser.dialect.as_str();
@@ -162,6 +165,9 @@ impl UserQuery {
 
     }
 
+/// An empty placeholder function, serving as a shim. 
+/// This function currently performs no operations and may be intended for future implementation. 
+/// It provides a no-op method in contexts where a trait or interface requires it.
     pub fn shim() {
  
 
@@ -173,6 +179,9 @@ impl UserQuery {
     
     }
 
+/// Parses the raw SQL query stored in `self` into an abstract syntax tree and then converts it into a DataFusion `LogicalPlan`. 
+/// This asynchronous function leverages the user session's DataFusion context to translate the parsed statement into an executable logical representation. 
+/// It returns the `LogicalPlan` or a `DataFusionError` if parsing the query string or planning the statement fails.
     pub async fn plan(&self) -> std::result::Result<LogicalPlan, DataFusionError> {
         let statement = self.parse_query()?;
         self.session.ctx.state().statement_to_plan(statement).await
@@ -186,6 +195,9 @@ impl UserQuery {
             .unwrap_or_else(|| "embucket".to_string())
     }
 
+/// Retrieves the name of the current schema for the user session. 
+/// This function first checks if a schema is explicitly set within the `query_context`, then falls back to retrieving the "schema" session variable. 
+/// If neither is set, it defaults to "public" as the current schema, returning the resolved schema name as a `String`.
     fn current_schema(&self) -> String {
         self.query_context
             .schema
@@ -195,6 +207,9 @@ impl UserQuery {
 
     }
 
+/// Partially refreshes the catalog by invalidating the cached entry for a specific `CachedEntity`. 
+/// This asynchronous function attempts to access an `EmbucketCatalogList` from the session's catalog list by downcasting and, if successful, triggers a cache invalidation for the specified entity's normalized identifier. 
+/// It returns `Ok(())` upon successful cache invalidation or an error if the operation cannot be completed, for example, if the `EmbucketCatalogList` is not available.
     #[instrument(
         name = "UserQuery::refresh_catalog_partially",
         level = "debug",
@@ -236,6 +251,9 @@ impl UserQuery {
         Ok(())
     }
 
+/// Creates a new catalog with the specified name and an associated volume. 
+/// This asynchronous function attempts to delegate the catalog creation to an `EmbucketCatalogList` instance if the session's catalog list can be downcast to that specific type. 
+/// It returns `Ok(())` on successful catalog creation or an error if the operation fails, such as if the `EmbucketCatalogList` is not found or the creation process encounters an issue.
     #[instrument(name = "UserQuery::create_catalog", level = "debug", skip(self), err)]
     async fn create_catalog(&self, catalog: &str, volume: &str) -> Result<()> {
         if let Some(catalog_list_impl) = self
@@ -255,6 +273,9 @@ impl UserQuery {
 
     }
 
+/// Constructs and returns a `SessionContextExprRewriter` populated with the current user session's contextual information. 
+/// This includes the active database, a list of available schemas within that database, the current schema, warehouse details, session identifier, system version, and references to the query context, history store, and running queries. 
+/// This struct is intended to facilitate rewriting expressions based on the dynamic session state.
     fn session_context_expr_rewriter(&self) -> SessionContextExprRewriter {
         let current_database = self.current_database();
         let schemas: Vec<String> = self
@@ -281,6 +302,9 @@ impl UserQuery {
         }
     }
 
+/// Applies a series of syntactic rewrite rules and validation checks to a DataFusion SQL statement in place. 
+/// This function modifies the statement to handle various SQL constructs like `RLIKE` to `REGEXP`, `LIKE/ILIKE` expressions, `TOP` to `LIMIT` conversions, function rewrites, and ensures that all functions are implemented. 
+/// It returns `Ok(())` if all rewrites and validations are successful, otherwise a `Result` indicating the error.
     #[instrument(name = "UserQuery::postprocess_query_statement", level = "trace", err)]
     pub fn postprocess_query_statement_with_validation(statement: &mut DFStatement) -> Result<()> {
         if let DFStatement::Statement(value) = statement {
@@ -302,6 +326,9 @@ impl UserQuery {
 
     }
 
+/// Parses and executes the SQL query contained within the `UserQuery` object. 
+/// This comprehensive asynchronous function dispatches execution based on the parsed statement type, handling commands like session alterations, DDL (CREATE/ALTER/DROP), DML (INSERT/MERGE/UPDATE), and various `SHOW` and `EXPLAIN` queries. 
+/// It updates the query context and returns a `QueryResult` upon successful completion or an error if any stage of execution fails.
     #[allow(clippy::too_many_lines)]
     #[instrument(
         name = "UserQuery::execute",
@@ -460,6 +487,9 @@ impl UserQuery {
         self.execute_sql(&self.query).await
     }
 
+/// Retrieves a catalog provider identified by its name from the session's catalog list. 
+/// This function queries the DataFusion `CatalogList` within the user's session state to locate and return the requested catalog. 
+/// It returns an `Arc<dyn CatalogProvider>` on success, or an error if the specified catalog (database) does not exist.
     #[instrument(name = "UserQuery::get_catalog", level = "trace", skip(self), err)]
     pub fn get_catalog(&self, name: &str) -> Result<Arc<dyn CatalogProvider>> {
         self.session
@@ -477,6 +507,9 @@ impl UserQuery {
 
     }
 
+/// Attempts to extract an Iceberg `Mirror` instance from a provided generic `CatalogProvider`. 
+/// This function performs a series of downcasts, first to a `CachingCatalog` and then to an `IcebergCatalog`, to retrieve its associated mirror. 
+/// It returns an `Option<Arc<Mirror>>`, which will be `Some` if an Iceberg mirror can be successfully extracted, or `None` otherwise.
     #[instrument(name = "UserQuery::get_iceberg_mirror", level = "trace")]
     fn get_iceberg_mirror(catalog: &Arc<dyn CatalogProvider>) -> Option<Arc<Mirror>> {
         let caching_catalog = catalog.as_any().downcast_ref::<CachingCatalog>()?;
@@ -487,6 +520,9 @@ impl UserQuery {
         Some(iceberg_catalog.mirror())
     }
 
+/// Resolves the underlying Iceberg or Embucket catalog from a generic `CatalogProvider` or executes a logical plan if it's a memory catalog. 
+/// This function attempts to downcast the provided catalog to specific types, returning the resolved catalog if it's an Iceberg or Embucket type. 
+/// Alternatively, if it's a `MemoryCatalogProvider`, it directly executes the `LogicalPlan` and returns the result, otherwise, it signals an error if downcasting fails.
     /// The code below relies on [`Catalog`] trait for different iceberg catalog
     /// implementations (REST, S3 table buckets, or anything else).
     /// In case this is built-in datafusion's [`MemoryCatalogProvider`] we shortcut and rely on its implementation
@@ -541,6 +577,18 @@ impl UserQuery {
         }
     }
 
+/// Sets one or more session variables based on the provided variable names and their corresponding expression values.
+/// This function supports setting variables from literal values, scalar subqueries, and binary operations, executing subqueries or expressions to derive scalar results when necessary.
+///
+/// # Arguments
+/// * `variables` - A `OneOrManyWithParens<ObjectName>` representing the names of the session variables to be set.
+/// * `values` - A `Vec<Expr>` containing the expressions that define the values for the respective variables. These expressions can be literal values, subqueries, or binary operations.
+///
+/// # Returns
+/// A `Result<QueryResult>` which indicates the success or failure of the operation. On success, it returns a `QueryResult` typically containing status information.
+///
+/// # Functionality
+/// The function processes each variable-value pair, converting the `Expr` into a `SessionProperty`. For `Expr::Value`, it directly creates a `SessionProperty`. For `Expr::Subquery` or `Expr::BinaryOp`, it constructs and executes a scalar query using `self.execute_scalar_query` to obtain a scalar result, which is then used to create the `SessionProperty`. Finally, it updates the current session's variables with these new properties and returns a status response.
     #[instrument(name = "UserQuery::set_variable", level = "trace", skip(self), err)]
     pub async fn set_variable(
         &self,
@@ -589,6 +637,9 @@ impl UserQuery {
         
     }
 
+/// Processes `ALTER TABLE` statements for a specified table, handling various alteration operations. 
+/// This asynchronous function first resolves the table object name, retrieves its corresponding catalog and schema from the session context, and performs initial validation including checking for table existence if `if_exists` is false. 
+/// It currently returns a success status query result, implying that actual alter operations are handled elsewhere or are yet to be fully implemented within this function.
     #[instrument(name = "UserQuery::alter_table", level = "trace", skip(self), err)]
     #[allow(clippy::too_many_lines)]
     pub async fn alter_table(

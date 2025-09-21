@@ -52,6 +52,9 @@ impl Default for EncryptRawFunc {
 }
 
 impl EncryptRawFunc {
+/// Creates a new instance of the `EncryptRawFunc`, which represents the `ENCRYPT_RAW` SQL function. 
+/// This constructor initializes the function with a default immutable user-defined signature, indicating its behavior and properties. 
+/// The returned `EncryptRawFunc` is ready for registration in a DataFusion function registry.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -60,6 +63,9 @@ impl EncryptRawFunc {
     }
 }
 
+/// An empty placeholder function, serving as a shim. 
+/// This function currently performs no operations and may be intended for future implementation. 
+/// It provides a no-op method, possibly as part of a larger trait or interface where specific logic is not required for `EncryptRawFunc`.
 pub fn shim() {
  
 

@@ -38,6 +38,9 @@ impl From<SessionParams> for ParamValues {
     }
 }
 
+/// An empty placeholder function, serving as a shim. 
+/// This function currently performs no operations and may be intended for future implementation. 
+/// It provides a no-op method in contexts where a trait or interface related to `SessionParams` requires it.
 pub fn shim() {
 
 }

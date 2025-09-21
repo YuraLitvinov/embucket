@@ -64,6 +64,9 @@ where
     Ok(JsonValue::Array(values))
 }
 
+/// Encodes a generic unsigned primitive Arrow array into a JSON array, representing each element as a JSON number. 
+/// This function iterates through the input `ArrowPrimitiveType` array, where the native type can be converted to `u64`. 
+/// It converts non-null unsigned native values to `u64` and then to `JsonValue::Number`, while mapping nulls to `JsonValue::Null`, returning the resulting `JsonValue::Array` or an `ArrowError`.
 /// Encodes an unsigned Primitive Arrow array into a JSON array
 pub fn encode_unsigned_array<T>(array: ArrayRef) -> Result<JsonValue, ArrowError>
 where
@@ -83,6 +86,9 @@ where
     Ok(JsonValue::Array(values))
 }
 
+/// A generic shim function designed to encode an unsigned primitive Arrow array into a JSON array. 
+/// This function iterates through the array, converting each non-null native value of type `T` (which must convert to `u64`) to a `u64` for numerical JSON representation. 
+/// Null values are mapped to `JsonValue::Null`, returning the `JsonValue::Array` or an `ArrowError`.
 pub fn shim<T>(array: ArrayRef) -> Result<JsonValue, ArrowError>
 where
     T: datafusion::arrow::datatypes::ArrowPrimitiveType,
@@ -101,6 +107,9 @@ where
     Ok(JsonValue::Array(values))
 }
 
+/// Encodes an Arrow `Float16` array into a JSON array, handling nulls and number representation. 
+/// This function iterates through the `Float16Type` array, converting each non-null value to an `f64` for JSON representation. 
+/// It ensures that whole numbers are formatted without decimal points, and null values are mapped to `JsonValue::Null`, returning the resulting `JsonValue::Array` or an `ArrowError`.
 /// Encodes a Float16 Arrow array into a JSON array
 pub fn encode_float16_array(array: ArrayRef) -> Result<JsonValue, ArrowError> {
     let array = array.as_primitive::<Float16Type>();

@@ -21,6 +21,9 @@ use snafu::ResultExt;
 use std::collections::HashMap;
 use validator::Validate;
 
+/// Creates a new namespace (schema) within the specified database in the metastore. 
+/// This function takes the database name from the path and a `CreateNamespaceRequest` from the JSON body, converting it into an internal `MetastoreSchema` representation using `to_schema`. 
+/// It then persists the new schema using the metastore service and returns a JSON object with the `CreateNamespaceResponse` on success, derived from the `from_schema` helper.
 #[tracing::instrument(level = "debug", skip(state), err, ret(level = tracing::Level::TRACE))]
 pub async fn create_namespace(
     State(state): State<AppState>,
@@ -41,6 +44,9 @@ pub async fn create_namespace(
 
 }
 
+/// Retrieves details of a specific namespace (schema) from the metastore. 
+/// This function extracts the database and schema names from the request path, queries the metastore, and converts the found `MetastoreSchema` into a `GetNamespaceResponse` using the `from_get_schema` helper. 
+/// It returns a JSON object containing the namespace details or an error if the schema is not found.
 #[tracing::instrument(level = "debug", skip(state), err, ret(level = tracing::Level::TRACE))]
 pub async fn get_namespace(
     State(state): State<AppState>,
@@ -77,6 +83,9 @@ pub async fn get_namespace(
     
 }
 
+/// Deletes a namespace (schema) from the metastore. 
+/// This asynchronous function takes the application state and the database and schema names from the request path, constructs a schema identifier, and then invokes the metastore to remove the corresponding schema. 
+/// It returns `StatusCode::NO_CONTENT` upon successful deletion, indicating that the namespace was removed.
 #[tracing::instrument(level = "debug", skip(state), err, ret(level = tracing::Level::TRACE))]
 pub async fn delete_namespace(
     State(state): State<AppState>,
